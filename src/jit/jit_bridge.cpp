@@ -5,7 +5,7 @@
 
 using namespace vdlisp;
 
-extern "C" auto VDLIST_call_from_jit(void* funcdata_ptr, double* args, int argc) -> double {
+extern "C" auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, int argc) -> double {
     try {
         State* S = jit_active_state;
         if (!S) return std::numeric_limits<double>::quiet_NaN();

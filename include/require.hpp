@@ -1,5 +1,5 @@
-#ifndef VDLIST_REQUIRE_HPP
-#define VDLIST_REQUIRE_HPP
+#ifndef VDLISP__REQUIRE_HPP
+#define VDLISP__REQUIRE_HPP
 
 #include "vdlisp.hpp"
 #include "helpers.hpp"
@@ -79,4 +79,4 @@ inline void register_require(State &S) {
 
 } // namespace vdlisp
 
-#endif // VDLIST_REQUIRE_HPP
+#endif // VDLISP__REQUIRE_HPP

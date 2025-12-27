@@ -1,5 +1,5 @@
-#ifndef VDLIST_VDLIST_HPP
-#define VDLIST_VDLIST_HPP
+#ifndef VDLISP__VDLISP__HPP
+#define VDLISP__VDLISP__HPP
 
 #include "nanbox.hpp"
 #include <boost/pool/object_pool.hpp>
@@ -111,4 +111,4 @@ namespace vdlisp
 
 } // namespace vdlisp
 
-#endif // VDLIST_VDLIST_HPP
+#endif // VDLISP__VDLISP__HPP

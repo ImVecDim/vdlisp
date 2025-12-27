@@ -14,7 +14,7 @@
 #include "helpers.hpp"
 
 // Bridge declared in jit_bridge.cpp
-extern "C" auto VDLIST_call_from_jit(void*, double*, int) -> double;
+extern "C" auto VDLISP__call_from_jit(void*, double*, int) -> double;
 
 JITCompiler::JITCompiler() {
     llvm::InitializeNativeTarget();
@@ -51,8 +51,8 @@ auto JITCompiler::compileFunctionFromBuilder(const std::function<llvm::Function*
     llvm::Module* mptr = m.get();
 
     // If the module references our runtime bridge, make sure it's mapped
-    if (llvm::Function *bridge = mptr->getFunction("VDLIST_call_from_jit")) {
-        executionEngine->addGlobalMapping(bridge, reinterpret_cast<void*>(VDLIST_call_from_jit));
+    if (llvm::Function *bridge = mptr->getFunction("VDLISP__call_from_jit")) {
+        executionEngine->addGlobalMapping(bridge, reinterpret_cast<void*>(VDLISP__call_from_jit));
     }
 
     executionEngine->addModule(std::move(m));

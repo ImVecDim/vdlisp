@@ -300,7 +300,7 @@ auto State::get_source_line(const std::string &file, size_t line, std::string &o
 
 void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std::string &msg)
 {
-  bool color = isatty(fileno(stderr)) || getenv("VDLIST_COLOR");
+  bool color = isatty(fileno(stderr)) || getenv("VDLISP__COLOR");
   const char *c_red = "\x1b[1;31m";
   const char *c_bold = "\x1b[1m";
   const char *c_reset = "\x1b[0m";

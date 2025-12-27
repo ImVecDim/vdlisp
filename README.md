@@ -72,7 +72,7 @@
 
 特性：
 - 提示符为 `> `
-- 使用 readline 历史记录文件：`~/.VDLIST_history`
+- 使用 readline 历史记录文件：`~/.VDLISP__history`
 - 每次输入会 `parse` + `eval`，并打印结果
 
 ### 执行 Lisp 脚本
@@ -178,7 +178,7 @@
 - `(print f)`：JIT 后会显示 `<jit_func>`（未 JIT 时为 `<function>`）
 
 实现细节提示：
-- JIT 代码可通过桥接函数 `VDLIST_call_from_jit` 回调解释器（见 [src/jit/jit_bridge.cpp](src/jit/jit_bridge.cpp)）
+- JIT 代码可通过桥接函数 `VDLISP__call_from_jit` 回调解释器（见 [src/jit/jit_bridge.cpp](src/jit/jit_bridge.cpp)）
 - 运行时使用 NaN-boxing 存储值；程序启动时会检查指针是否能放入 48-bit payload（典型 x86_64 “canonical address” 假设）。若平台不满足会直接退出。
 
 ## 测试

@@ -12,12 +12,12 @@ cmake --build build -j$(nproc)
 
 
 # Interpreter binary (allow override)
-VDLIST_BIN=${VDLIST_BIN:-build/vdlisp}
+VDLISP__BIN=${VDLISP__BIN:-build/vdlisp}
 
 # Pool lifecycle test: run the interpreter on a script that performs many allocations
 {
   echo "Running pool lifecycle test (via interpreter)..."
-  if "$VDLIST_BIN" tests/pool_test.lisp 2>&1 | grep -q "pool_test_ok"; then
+  if "$VDLISP__BIN" tests/pool_test.lisp 2>&1 | grep -q "pool_test_ok"; then
     echo "ok: pool lifecycle test -> pool_test_ok"
   else
     echo "FAILED: pool lifecycle test failed (interpreter did not print pool_test_ok)"
@@ -26,7 +26,7 @@ VDLIST_BIN=${VDLIST_BIN:-build/vdlisp}
 }
 
 # Interpreter binary (allow override)
-VDLIST_BIN=${VDLIST_BIN:-build/vdlisp}
+VDLISP__BIN=${VDLISP__BIN:-build/vdlisp}
 
 # Test cases: each item is "<expr>" "<expected>".
 # If expected starts with 'err:' we assert the interpreter prints an error
@@ -135,7 +135,7 @@ run_one() {
   tmpf=$(mktemp --suffix=.lisp)
   printf "%s" "$expr" > "$tmpf"
   local out
-  out=$("$VDLIST_BIN" "$tmpf" 2>&1 || true)
+  out=$("$VDLISP__BIN" "$tmpf" 2>&1 || true)
 
   # capture last non-empty line for normal checks
   local last

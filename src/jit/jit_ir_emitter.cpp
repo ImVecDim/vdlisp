@@ -289,7 +289,7 @@ auto JITIREmitter::emitExpr(vdlisp::Ptr expr) -> llvm::Value*
                 } else {
                     llvm::Type *i8ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context));
                     llvm::FunctionType *bridge_ft = llvm::FunctionType::get(dblTy, {i8ptr, dblPtr, llvm::Type::getInt32Ty(context)}, false);
-                    llvm::FunctionCallee bridge = M->getOrInsertFunction("VDLIST_call_from_jit", bridge_ft);
+                    llvm::FunctionCallee bridge = M->getOrInsertFunction("VDLISP__call_from_jit", bridge_ft);
                     llvm::Constant *fd_c = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), (uint64_t)callee_fd);
                     llvm::Constant *fd_ptr = llvm::ConstantExpr::getIntToPtr(fd_c, i8ptr);
                     llvm::Value *callv = ir.CreateCall(bridge, {fd_ptr, argArrayPtr, argcV});

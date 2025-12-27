@@ -1,5 +1,5 @@
-#ifndef VDLIST_HELPERS_HPP
-#define VDLIST_HELPERS_HPP
+#ifndef VDLISP__HELPERS_HPP
+#define VDLISP__HELPERS_HPP
 
 #include "vdlisp.hpp"
 

@@ -1,5 +1,5 @@
-#ifndef VDLIST_NANBOX_HPP
-#define VDLIST_NANBOX_HPP
+#ifndef VDLISP__NANBOX_HPP
+#define VDLISP__NANBOX_HPP
 
 #include <cstdint>
 #include <cstring>
@@ -150,4 +150,4 @@ namespace vdlisp
 
 } // namespace vdlisp
 
-#endif // VDLIST_NANBOX_HPP
+#endif // VDLISP__NANBOX_HPP

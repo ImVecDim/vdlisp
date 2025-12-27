@@ -649,7 +649,7 @@ static void repl(State &S)
 {
   const char *home = getenv("HOME");
   std::string histfile;
-  if (home) histfile = std::string(home) + "/.VDLIST_history";
+  if (home) histfile = std::string(home) + "/.VDLISP__history";
 
   if (!histfile.empty())
     read_history(histfile.c_str());
