@@ -15,7 +15,7 @@
 
 - C++17 编译器（默认 `clang++`）
 - LLVM（需要 `llvm-config`，并链接 `core`、`native` 等库）
-- `readline`（用于 REPL 的行编辑与历史记录）
+- GNU readline（用于 REPL 的行编辑与历史记录）
 - Boost（使用 `boost::object_pool` 作为运行时对象内存池）
 
 说明：构建使用 `llvm-config`（通过 `CMake` 检测）来获取 LLVM 的编译与链接标志；如果系统上没有 `llvm-config`，CMake 会尝试在常见路径回退查找。
@@ -98,6 +98,18 @@
 - `nil`：空值/空表（解析 token `nil` 会得到空指针表示）
 - 字符串：双引号，支持转义 `\n \t \r \\ \"`
 
+### 语法（精简概览）
+
+- 词法简洁：Token 由空白或者分隔符 `(` `)` `'` `` ` `` `,` `"` `;` 划分；注释以 `;` 到行末。
+- 原子：数值、字符串、符号（任意非分隔符序列）与 `nil`。
+- 真值：启动时将 `#t` 绑定为真值符号；任何非 `nil` 均视为真。
+- 列表：以括号表示 `(a b c)`；支持点尾记法 `(a b . c)` 表示 dotted-tail。
+- 引用：`'x` 等价于 `(quote x)`；支持反引号 `` ` `` （quasiquote）与逗号 `,`（unquote）。
+- 数字：支持浮点表示法（可含指数部分），解析与 C `strtod` 兼容。
+- 字符串：双引号，支持常见转义序列 `\n \t \r \" \\`。
+
+更多精确词法/语法定义见：[grammar.ebnf](grammar.ebnf)
+
 ### 真值
 
 - `nil` 为假
@@ -166,6 +178,7 @@
 
 - 仅对“用户函数”（`TFUNC`）尝试 JIT
 - 仅当一次调用的**实参全部为 number** 时，才走数值热路径统计 `num_call_count`
+- 当前可变参数函数无法被 JIT
 - 当 `num_call_count > 3` 且尚未编译、也未标记失败时，触发 `global_jit.compileFuncData(fd)`
 - 若 JIT 代码执行返回 NaN（例如内部遇到非数值/回调解释器后得到非 number），会禁用该函数的 JIT：
   - 清空 `compiled_code`
