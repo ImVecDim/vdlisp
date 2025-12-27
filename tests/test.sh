@@ -51,8 +51,8 @@ TESTS=(
   '(type (list))' 'nil'
 
   # Equality / identity
-  '(< 1 2)' 't'
-  '(> 3 2)' 't'
+  '(< 1 2)' '#t'
+  '(> 3 2)' '#t'
 
   # apply / higher-order
   '(apply + (list 1 2))' '3'

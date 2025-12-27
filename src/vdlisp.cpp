@@ -41,10 +41,10 @@ State::State()
 {
   global = std::make_shared<Env>();
   register_core(*this);
-  // convenience: bind true symbol 't'
-  bind_global("t", make_symbol("t"));
-  // bind 'else' as alias for 't' for cond
-  bind_global("else", make_symbol("t"));
+  // convenience: bind true symbol '#t'
+  bind_global("#t", make_symbol("#t"));
+  // bind 'else' as alias for '#t' for cond
+  bind_global("else", make_symbol("#t"));
 }
 
 // -------------------- State object pool allocators --------------------

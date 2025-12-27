@@ -44,7 +44,7 @@ static auto compare_chain(
     a = b;
     cur = pair_cdr(cur);
   }
-  return S.get_bound("t", S.global);
+  return S.get_bound("#t", S.global);
 }
 
 void register_core(State &S)
@@ -171,7 +171,7 @@ void register_core(State &S)
   S.register_builtin("=", [](State &S, Ptr args) -> Ptr {
     Ptr a = pair_car(args);
     Ptr b = pair_car(pair_cdr(args));
-    return value_equal(a, b) ? S.get_bound("t", S.global) : Ptr();
+    return value_equal(a, b) ? S.get_bound("#t", S.global) : Ptr();
   });
 
   S.register_builtin("exit", [](State &S, Ptr args) -> Ptr {
