@@ -243,8 +243,7 @@ void register_core(State &S)
   });
   S.register_prim("let", [](State &S, Ptr args, std::shared_ptr<Env> env) -> Ptr {
     Ptr vars = pair_car(args);
-    auto e = std::make_shared<Env>();
-    e->parent = env;
+    auto e = S.make_env(env);
     while (vars)
     {
       Ptr sym = pair_car(vars);

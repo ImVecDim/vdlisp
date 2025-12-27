@@ -43,6 +43,10 @@ namespace vdlisp
     auto make_prim(const Prim &fn) -> Ptr;
     auto make_macro(Ptr params, Ptr body, std::shared_ptr<Env> env) -> Ptr;
 
+    // pooled helpers
+    auto make_pooled_value(Type t) -> Ptr;
+    auto make_env(std::shared_ptr<Env> parent = nullptr) -> std::shared_ptr<Env>;
+
     // convenience helpers for constructing lists
     auto make_string_list(const std::vector<std::string> &items) -> Ptr;
     auto make_string_list(int argc, char **argv, int start = 0) -> Ptr;
@@ -83,11 +87,17 @@ namespace vdlisp
     auto alloc_func(Ptr params, Ptr body, std::shared_ptr<Env> env) -> FuncData*;
     auto alloc_macro(Ptr params, Ptr body, std::shared_ptr<Env> env) -> MacroData*;
 
+    // Pooled allocation helpers for Value and Env
+    auto alloc_value(Type t) -> Value*;
+    auto alloc_env() -> Env*;
+
     // Boost pools owning runtime objects. Values store raw pointers into these pools.
     ExposedObjectPool<std::string> string_pool;
     ExposedObjectPool<PairData> pair_pool;
     ExposedObjectPool<FuncData> func_pool;
     ExposedObjectPool<MacroData> macro_pool;
+    ExposedObjectPool<Value> value_pool;
+    ExposedObjectPool<Env> env_pool;
 
   public:
     // helpers

@@ -17,7 +17,6 @@
 using namespace vdlisp;
 
 // -------------------- helpers --------------------
-static auto make_value(Type t) -> Ptr { return std::make_shared<Value>(t); }
 
 template<class It>
 static auto make_string_list_range(State &S, It b, It e) -> Ptr
@@ -39,7 +38,7 @@ static auto make_string_list_range(State &S, It b, It e) -> Ptr
 
 State::State()
 {
-  global = std::make_shared<Env>();
+  global = make_env();
   register_core(*this);
   // convenience: bind true symbol '#t'
   bind_global("#t", make_symbol("#t"));
@@ -85,6 +84,34 @@ auto State::alloc_macro(Ptr params, Ptr body, std::shared_ptr<Env> env) -> Macro
   return m;
 }
 
+// Value and Env allocators
+auto State::alloc_value(Type t) -> Value*
+{
+  Value *v = value_pool.construct(t);
+  return v;
+}
+
+auto State::make_pooled_value(Type t) -> Ptr
+{
+  Value *v = alloc_value(t);
+  return Ptr(v, [](Value*){});
+}
+
+auto State::alloc_env() -> Env*
+{
+  Env *e = env_pool.construct();
+  e->parent = nullptr;
+  e->map.clear();
+  return e;
+}
+
+auto State::make_env(std::shared_ptr<Env> parent) -> std::shared_ptr<Env>
+{
+  Env *e = alloc_env();
+  e->parent = parent;
+  return std::shared_ptr<Env>(e, [](Env*){});
+}
+
 void State::shutdown_and_purge_pools()
 {
   // 1) Release runtime references so Value destructors can run while pooled
@@ -104,22 +131,29 @@ void State::shutdown_and_purge_pools()
   (void)pair_pool.purge_memory();
   (void)func_pool.purge_memory();
   (void)string_pool.purge_memory();
+  (void)value_pool.purge_memory();
+  (void)env_pool.purge_memory();
 
   // IMPORTANT: do NOT destroy/free each object individually here.
   // `boost::object_pool<T>::free/destroy` uses ordered_free with O(N) behavior;
   // doing that per object can become effectively O(N^2) and look like a dead loop.
   // Instead, destroy the entire pool, which performs a single linear scan over blocks.
   // Destruction order matters: keep func_pool alive until after pairs/macros are destroyed,
-  // because releasing a function Value consults its FuncData.
+  // because releasing a function Value consults its FuncData. Also ensure func_pool
+  // remains alive while Value destructors run (value_pool destroyed first).
   string_pool.~ExposedObjectPool<std::string>();
   macro_pool.~ExposedObjectPool<MacroData>();
   pair_pool.~ExposedObjectPool<PairData>();
+  value_pool.~ExposedObjectPool<Value>();
   func_pool.~ExposedObjectPool<FuncData>();
+  env_pool.~ExposedObjectPool<Env>();
 
   new (&func_pool) ExposedObjectPool<FuncData>();
+  new (&value_pool) ExposedObjectPool<Value>();
   new (&pair_pool) ExposedObjectPool<PairData>();
   new (&macro_pool) ExposedObjectPool<MacroData>();
   new (&string_pool) ExposedObjectPool<std::string>();
+  new (&env_pool) ExposedObjectPool<Env>();
 }
 
 // global used by JIT bridge to access the interpreter State when native
@@ -129,13 +163,13 @@ vdlisp::State* vdlisp::jit_active_state = nullptr;
 auto State::make_nil() -> Ptr { return {}; }
 auto State::make_number(double n) -> Ptr
 {
-  Ptr v = make_value(TNUMBER);
+  Ptr v = make_pooled_value(TNUMBER);
   v->set_number(n);
   return v;
 }
 auto State::make_string(const std::string &s) -> Ptr
 {
-  Ptr v = make_value(TSTRING);
+  Ptr v = make_pooled_value(TSTRING);
   v->set_string(alloc_string(s));
   return v;
 }
@@ -144,38 +178,38 @@ auto State::make_symbol(const std::string &s) -> Ptr
   auto it = symbol_intern.find(s);
   if (it != symbol_intern.end())
     return it->second;
-  Ptr v = make_value(TSYMBOL);
+  Ptr v = make_pooled_value(TSYMBOL);
   v->set_symbol(alloc_string(s));
   symbol_intern[s] = v;
   return v;
 }
 auto State::make_pair(Ptr car, Ptr cdr) -> Ptr
 {
-  Ptr v = make_value(TPAIR);
+  Ptr v = make_pooled_value(TPAIR);
   v->set_pair(alloc_pair(car, cdr));
   return v;
 }
 auto State::make_cfunc(const CFunc &fn) -> Ptr
 {
-  Ptr v = make_value(TCFUNC);
+  Ptr v = make_pooled_value(TCFUNC);
   v->set_cfunc(fn);
   return v;
 }
 auto State::make_prim(const Prim &fn) -> Ptr
 {
-  Ptr v = make_value(TPRIM);
+  Ptr v = make_pooled_value(TPRIM);
   v->set_prim(fn);
   return v;
 }
 auto State::make_function(Ptr params, Ptr body, std::shared_ptr<Env> env) -> Ptr
 {
-  Ptr v = make_value(TFUNC);
+  Ptr v = make_pooled_value(TFUNC);
   v->set_func(alloc_func(params, body, env));
   return v;
 }
 auto State::make_macro(Ptr params, Ptr body, std::shared_ptr<Env> env) -> Ptr
 {
-  Ptr v = make_value(TMACRO);
+  Ptr v = make_pooled_value(TMACRO);
   v->set_macro(alloc_macro(params, body, env));
   return v;
 }
@@ -390,8 +424,7 @@ auto State::eval(Ptr expr, std::shared_ptr<Env> env) -> Ptr
       Ptr params = md->params;
       Ptr body = md->body;
       std::shared_ptr<Env> closure_env = md->closure_env;
-      auto e = std::make_shared<Env>();
-      e->parent = closure_env;
+      auto e = make_env(closure_env);
       bind_params_to_env(e->map, params, cdr, /*fill_missing_with_nil=*/true);
       // compute call-site location and a one-frame call-chain entry
       State::SourceLoc call_loc;
@@ -530,8 +563,7 @@ auto State::call(Ptr fn, Ptr args, std::shared_ptr<Env> env) -> Ptr
             Ptr params = fd->params;
             Ptr body = fd->body;
             std::shared_ptr<Env> closure_env = fd->closure_env;
-            auto e = std::make_shared<Env>();
-            e->parent = closure_env ? closure_env : global;
+            auto e = make_env(closure_env ? closure_env : global);
             bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
             return do_list(body, e);
         }
@@ -542,8 +574,7 @@ auto State::call(Ptr fn, Ptr args, std::shared_ptr<Env> env) -> Ptr
     Ptr params = fd->params;
     Ptr body = fd->body;
     std::shared_ptr<Env> closure_env = fd->closure_env;
-    auto e = std::make_shared<Env>();
-    e->parent = closure_env ? closure_env : global;
+    auto e = make_env(closure_env ? closure_env : global);
     // bind params (for functions, missing args stop binding as before)
     bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
     // evaluate function body with call-chain annotation so errors report the call site
