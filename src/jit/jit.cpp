@@ -1,0 +1,148 @@
+// jit.cpp (moved into src/jit)
+#include "jit/jit.hpp"
+#include <llvm/ExecutionEngine/ExecutionEngine.h>
+#include <llvm/ExecutionEngine/MCJIT.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Support/TargetSelect.h>
+#include <iostream>
+
+#include "nanbox.hpp"
+#include "jit/jit_ir_builder.hpp"
+#include <unordered_map>
+#include "helpers.hpp"
+
+// Bridge declared in jit_bridge.cpp
+extern "C" auto VDLIST_call_from_jit(void*, double*, int) -> double;
+
+JITCompiler::JITCompiler() {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+
+    auto m = std::make_unique<llvm::Module>("jit_module", context);
+
+    std::string error;
+    executionEngine = std::unique_ptr<llvm::ExecutionEngine>(
+        llvm::EngineBuilder(std::move(m))
+            .setErrorStr(&error)
+            .setEngineKind(llvm::EngineKind::JIT)
+            .create());
+
+    if (!executionEngine) {
+        throw std::runtime_error("ExecutionEngine creation failed: " + error);
+    }
+}
+
+JITCompiler::~JITCompiler() = default;
+
+// Concrete global JIT instance used by the runtime
+JITCompiler global_jit;
+
+auto JITCompiler::compileFunctionFromBuilder(const std::function<llvm::Function*(llvm::Module&)>& builder) -> void* {
+    std::string mname = "jit_module";
+    auto m = std::make_unique<llvm::Module>(mname, context);
+
+    llvm::Function* f = builder(*m);
+    if (!f) return nullptr;
+
+
+    llvm::Module* mptr = m.get();
+
+    // If the module references our runtime bridge, make sure it's mapped
+    if (llvm::Function *bridge = mptr->getFunction("VDLIST_call_from_jit")) {
+        executionEngine->addGlobalMapping(bridge, reinterpret_cast<void*>(VDLIST_call_from_jit));
+    }
+
+    executionEngine->addModule(std::move(m));
+    executionEngine->finalizeObject();
+    void* ptr = executionEngine->getPointerToFunction(f);
+    if (ptr) module_for_fn[ptr] = mptr;
+    return ptr;
+}
+
+void JITCompiler::releaseFunctionCode(void* fnPtr) {
+    if (!fnPtr) return;
+    auto it = module_for_fn.find(fnPtr);
+    if (it == module_for_fn.end()) return;
+    llvm::Module* mptr = it->second;
+    try {
+        auto res = executionEngine->removeModule(mptr);
+        (void)res;
+    } catch (...) {}
+    for (auto jt = module_for_fn.begin(); jt != module_for_fn.end();) {
+        if (jt->second == mptr) jt = module_for_fn.erase(jt);
+        else ++jt;
+    }
+}
+
+auto JITCompiler::getContext() -> llvm::LLVMContext& {
+    return context;
+}
+
+// helper: scan an AST and collect TFUNC pointers referenced by symbol calls
+static void collect_called_funcs(vdlisp::Ptr expr, std::vector<vdlisp::FuncData*> &out, std::shared_ptr<vdlisp::Env> closure) {
+    using namespace vdlisp;
+    if (!expr) return;
+    if (expr->get_type() == TPAIR) {
+        vdlisp::PairData *pd = expr->get_pair();
+        Ptr car = pd->car;
+        Ptr cdr = pd->cdr;
+        if (car && car->get_type() == TSYMBOL) {
+            std::string name = *car->get_symbol();
+            auto e = closure;
+            while (e) {
+                auto it = e->map.find(name);
+                if (it != e->map.end()) {
+                    Ptr v = it->second;
+                    if (v && v->get_type() == TFUNC) {
+                        out.push_back(v->get_func());
+                    }
+                    break;
+                }
+                e = e->parent;
+            }
+        }
+        Ptr walk = expr;
+        while (walk) {
+            collect_called_funcs(pair_car(walk), out, closure);
+            walk = pair_cdr(walk);
+        }
+    }
+}
+
+auto JITCompiler::compileFuncData(vdlisp::FuncData* func) -> void* {
+    if (!func) return nullptr;
+    using namespace vdlisp;
+
+    std::vector<FuncData*> to_compile;
+    collect_called_funcs(func->body, to_compile, func->closure_env);
+    for (FuncData *fd : to_compile) {
+        if (fd && !fd->compiled_code && !fd->jit_failed && fd != func) {
+            try {
+                void *res = this->compileFuncData(fd);
+                (void)res;
+            } catch (...) {
+                // ignore
+            }
+        }
+    }
+
+    std::string fname = "jit_fn_" + std::to_string(reinterpret_cast<uintptr_t>(func));
+    auto builder = [func, this, fname](llvm::Module &M) -> llvm::Function* {
+        return build_func_ir(func, M, this->getContext(), fname);
+    };
+
+    void *ptr = nullptr;
+    try { ptr = this->compileFunctionFromBuilder(builder); } catch (const std::exception &e) {
+        func->jit_failed = true; return nullptr;
+    } catch (...) {
+        func->jit_failed = true; return nullptr;
+    }
+    if (!ptr) {
+        func->jit_failed = true; return nullptr;
+    }
+    func->compiled_code = ptr;
+    return ptr;
+}

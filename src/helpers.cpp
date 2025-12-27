@@ -1,0 +1,400 @@
+#include "helpers.hpp"
+#include <iostream>
+#include <sstream>
+#include <cctype>
+#include <cstdlib>
+#include <unistd.h>
+#include <stdexcept>
+
+namespace vdlisp {
+
+static auto is_delim(char c) -> bool
+{
+  return std::isspace((unsigned char)c) || c == '(' || c == ')' || c == '\'' || c == '"' || c == ';' || c == '`' || c == ',';
+}
+
+static void advance_pos(const std::string &src, size_t &pos, size_t &line, size_t &col)
+{
+  if (pos >= src.size())
+    return;
+  char c = src[pos++];
+  if (c == '\n')
+  {
+    ++line;
+    col = 1;
+  }
+  else
+  {
+    ++col;
+  }
+}
+
+static void skip_ws_and_comments(const std::string &src, size_t &pos, size_t &line, size_t &col)
+{
+  while (pos < src.size())
+  {
+    char c = src[pos];
+    if (std::isspace((unsigned char)c))
+    {
+      advance_pos(src, pos, line, col);
+      continue;
+    }
+    if (c == ';')
+    {
+      // comment until newline
+      while (pos < src.size() && src[pos] != '\n')
+        advance_pos(src, pos, line, col);
+      continue;
+    }
+    break;
+  }
+}
+
+// parser implementation; kept in src/helpers.cpp via non-member parse_at
+
+static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Ptr
+{
+  skip_ws_and_comments(src, pos, line, col);
+  if (pos >= src.size())
+    return {};
+  char c = src[pos];
+  if (c == ')')
+  {
+    throw ParseError(State::SourceLoc{name, line, col}, "unexpected )");
+  }
+  if (c == '(')
+  {
+    size_t open_line = line;
+    size_t open_col = col;
+
+    advance_pos(src, pos, line, col);
+    Ptr head = nullptr;
+    Ptr *last = &head;
+    bool closed = false;
+    while (true)
+    {
+      skip_ws_and_comments(src, pos, line, col);
+      if (pos >= src.size())
+        break;
+      if (src[pos] == ')')
+      {
+        advance_pos(src, pos, line, col);
+        closed = true;
+        break;
+      }
+      // Parse next element. If it's the dot symbol "." then treat the
+      // following expression as the dotted-tail (cdr) of the list.
+      Ptr e = parse_at(S, src, pos, line, col, name);
+      if (e && e->get_type() == TSYMBOL && *e->get_symbol() == ".") {
+        // dotted-tail: parse the tail expression and splice it as the cdr
+        skip_ws_and_comments(src, pos, line, col);
+        if (pos >= src.size())
+          throw ParseError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF after . in list");
+        Ptr tail = parse_at(S, src, pos, line, col, name);
+        // set the cdr pointer of the last pair (pointed to by `last`) to tail
+        *last = tail;
+        // after a dotted-tail the list must be closed immediately
+        skip_ws_and_comments(src, pos, line, col);
+        if (pos >= src.size() || src[pos] != ')')
+          throw ParseError(State::SourceLoc{name, open_line, open_col}, "expected ) after dotted-tail");
+        advance_pos(src, pos, line, col);
+        closed = true;
+        break;
+      }
+      // Otherwise append the parsed element to the list as before.
+      *last = S.make_pair(e, Ptr());
+      PairData *pd = (*last)->get_pair();
+      S.set_source_loc(*last, name, open_line, open_col);
+      last = &pd->cdr;
+    }
+    if (!closed)
+    {
+      throw ParseError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF while reading list");
+    }
+    return head;
+  }
+  else if (c == '\'')
+  {
+    size_t qline = line;
+    size_t qcol = col;
+
+    advance_pos(src, pos, line, col);
+    Ptr quoted = parse_at(S, src, pos, line, col, name);
+    Ptr res = list_of(S, {S.make_symbol("quote"), quoted});
+    S.set_source_loc(res, name, qline, qcol);
+    return res;
+  }
+  else if (c == '`')
+  {
+    size_t qline = line;
+    size_t qcol = col;
+
+    advance_pos(src, pos, line, col);
+    Ptr qq = parse_at(S, src, pos, line, col, name);
+    Ptr res = list_of(S, {S.make_symbol("quasiquote"), qq});
+    S.set_source_loc(res, name, qline, qcol);
+    return res;
+  }
+  else if (c == ',')
+  {
+    size_t qline = line;
+    size_t qcol = col;
+
+    advance_pos(src, pos, line, col);
+    Ptr uq = parse_at(S, src, pos, line, col, name);
+    Ptr res = list_of(S, {S.make_symbol("unquote"), uq});
+    S.set_source_loc(res, name, qline, qcol);
+    return res;
+  }
+  else if (c == '"')
+  {
+    size_t sline = line;
+    size_t scol = col;
+
+    advance_pos(src, pos, line, col);
+    std::string s;
+    while (pos < src.size() && src[pos] != '"')
+    {
+      if (src[pos] == '\\' && pos + 1 < src.size()) {
+        advance_pos(src, pos, line, col);
+        char esc = src[pos];
+        switch (esc) {
+          case 'n': s.push_back('\n'); break;
+          case 't': s.push_back('\t'); break;
+          case 'r': s.push_back('\r'); break;
+          case '\\': s.push_back('\\'); break;
+          case '"': s.push_back('"'); break;
+          default: s.push_back(esc); break;
+        }
+        advance_pos(src, pos, line, col);
+      } else {
+        s.push_back(src[pos]);
+        advance_pos(src, pos, line, col);
+      }
+    }
+    if (pos >= src.size())
+    {
+      throw ParseError(State::SourceLoc{name, sline, scol}, "unexpected EOF while reading string");
+    }
+    // consume closing quote
+    advance_pos(src, pos, line, col);
+    Ptr v = S.make_string(s);
+    S.set_source_loc(v, name, sline, scol);
+    return v;
+  }
+  else
+  {
+    // symbol or number
+    size_t start = pos;
+    size_t tline = line;
+    size_t tcol = col;
+    while (pos < src.size() && !is_delim(src[pos]))
+      advance_pos(src, pos, line, col);
+    std::string tok = src.substr(start, pos - start);
+    // try number
+    char *endp = nullptr;
+    double val = strtod(tok.c_str(), &endp);
+    if (endp != tok.c_str() && *endp == '\0') {
+      Ptr v = S.make_number(val);
+      S.set_source_loc(v, name, tline, tcol);
+      return v;
+    }
+    if (tok == "nil")
+      return {};
+    Ptr v = S.make_symbol(tok);
+    S.set_source_loc(v, name, tline, tcol);
+    return v;
+  }
+}
+
+auto State::parse(const std::string &src, const std::string &name) -> Ptr
+{
+  sources[name] = src;
+  size_t pos = 0;
+  size_t line = 1;
+  size_t col = 1;
+  return parse_at(*this, src, pos, line, col, name);
+}
+
+auto State::parse_all(const std::string &src, const std::string &name) -> Ptr
+{
+  sources[name] = src;
+  size_t pos = 0;
+  size_t line = 1;
+  size_t col = 1;
+  Ptr head;
+  Ptr *last = &head;
+  while (pos < src.size())
+  {
+    Ptr e = parse_at(*this, src, pos, line, col, name);
+    *last = make_pair(e, Ptr());
+    PairData *pd = (*last)->get_pair();
+    last = &pd->cdr;
+  }
+  return head;
+}
+
+auto list_of(State &S, std::initializer_list<Ptr> items) -> Ptr
+{
+  Ptr head;
+  Ptr *last = &head;
+  for (auto &it : items)
+  {
+    *last = std::make_shared<Value>(TPAIR);
+    *last = S.make_pair(it, Ptr());
+    PairData *pd = (*last)->get_pair();
+    last = &pd->cdr;
+  }
+  return head;
+}
+
+void State::set_source_loc(Ptr v, const std::string &file, size_t line, size_t col)
+{
+  if (!v)
+    return;
+  SourceLoc loc;
+  loc.file = file;
+  loc.line = line;
+  loc.col = col;
+  src_map[v.get()] = loc;
+}
+
+auto State::get_source_loc(Ptr v, SourceLoc &out) const -> bool
+{
+  if (!v)
+    return false;
+  auto it = src_map.find(v.get());
+  if (it == src_map.end())
+    return false;
+  out = it->second;
+  return true;
+}
+
+auto State::get_source_line(const std::string &file, size_t line, std::string &out) const -> bool
+{
+  auto it = sources.find(file);
+  if (it == sources.end())
+    return false;
+  const std::string &s = it->second;
+  size_t cur = 1;
+  size_t start = 0;
+  size_t i = 0;
+  while (cur < line && i < s.size())
+  {
+    if (s[i] == '\n')
+    {
+      ++cur;
+      ++i;
+      start = i;
+    }
+    else
+      ++i;
+  }
+  if (start >= s.size())
+    return false;
+  size_t end = start;
+  while (end < s.size() && s[end] != '\n') ++end;
+  out = s.substr(start, end - start);
+  return true;
+}
+
+void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std::string &msg)
+{
+  bool color = isatty(fileno(stderr)) || getenv("VDLIST_COLOR");
+  const char *c_red = "\x1b[1;31m";
+  const char *c_bold = "\x1b[1m";
+  const char *c_reset = "\x1b[0m";
+
+  if (color) std::cerr << c_red;
+  std::cerr << "error: " << loc.file << ":" << loc.line << ":" << loc.col << ": " << msg << "\n";
+  if (color) std::cerr << c_reset;
+
+  std::string line;
+  if (S.get_source_line(loc.file, loc.line, line))
+  {
+    if (color) std::cerr << c_bold << line << c_reset << "\n";
+    else std::cerr << line << "\n";
+
+    size_t col_index = loc.col ? loc.col - 1 : 0;
+    std::string caret_spaces;
+    for (size_t i = 0; i < col_index; ++i)
+      caret_spaces.push_back((i < line.size() && line[i] == '\t') ? '\t' : ' ');
+
+    if (color)
+      std::cerr << caret_spaces << c_red << "^" << c_reset << "\n";
+    else
+      std::cerr << caret_spaces << "^" << "\n";
+  }
+}
+
+} // namespace vdlisp
+
+// Move previously-inline helper implementations here
+namespace vdlisp {
+
+auto value_equal(Ptr a, Ptr b) -> bool
+{
+  if (a == b) return true;
+  if (!a || !b) return false;
+  if (a->get_type() != b->get_type()) return false;
+  switch (a->get_type()) {
+    case TNUMBER: return a->get_number() == b->get_number();
+    case TSTRING: return *a->get_string() == *b->get_string();
+    case TSYMBOL: return *a->get_symbol() == *b->get_symbol();
+    case TPAIR: {
+      PairData *ap = a->get_pair();
+      PairData *bp = b->get_pair();
+      return value_equal(ap->car, bp->car) && value_equal(ap->cdr, bp->cdr);
+    }
+    default: return a == b;
+  }
+}
+
+auto type_name(Ptr v) -> std::string
+{
+  if (!v) return std::string("nil");
+  return v->type_name();
+}
+
+auto require_number(Ptr v, const char *who) -> double
+{
+  if (!v || v->get_type() != TNUMBER)
+    throw std::runtime_error(std::string(who) + std::string(": expected number, got ") + std::string(type_name(v)));
+  return v->get_number();
+}
+
+// Small helpers to reduce repetitive type checks and accessors
+auto pair_car(Ptr p) -> Ptr {
+  if (!p) return {};
+  if (p->get_type() != TPAIR) return {};
+  return p->get_pair()->car;
+}
+
+auto pair_cdr(Ptr p) -> Ptr {
+  if (!p) return {};
+  if (p->get_type() != TPAIR) return {};
+  return p->get_pair()->cdr;
+}
+
+auto is_pair(Ptr p) -> bool {
+  return p && p->get_type() == TPAIR;
+}
+
+auto is_symbol(Ptr p, const std::string &name) -> bool {
+  return p && p->get_type() == TSYMBOL && *p->get_symbol() == name;
+}
+
+// Setters for pair fields
+void pair_set_car(Ptr p, Ptr v) {
+  if (!p) return;
+  if (p->get_type() != TPAIR) return;
+  p->get_pair()->car = v;
+}
+
+void pair_set_cdr(Ptr p, Ptr v) {
+  if (!p) return;
+  if (p->get_type() != TPAIR) return;
+  p->get_pair()->cdr = v;
+}
+
+} // namespace vdlisp

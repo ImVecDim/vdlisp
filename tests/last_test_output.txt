@@ -1,0 +1,84 @@
+[100%] Built target vdlisp
+Running pool lifecycle test (via interpreter)...
+ok: pool lifecycle test -> pool_test_ok
+ok: (+ 1 2) -> 3
+ok: (- 10 3) -> 7
+ok: (* 2 3) -> 6
+ok: (/ 12 3) -> 4
+ok: (list 1 2 3) -> (1 2 3)
+ok: (cons 1 (list 2 3)) -> (1 2 3)
+ok: (car (list 1 2)) -> 1
+ok: (cdr (list 1 2)) -> (2)
+ok: (type "hi") -> string
+ok: (type (list)) -> nil
+ok: (< 1 2) -> t
+ok: (> 3 2) -> t
+ok: (apply + (list 1 2)) -> 3
+ok: (parse "(+ 1 2)") -> (+ 1 2)
+ok: (parse "\"a\\\"b\"") -> a"b
+ok: (require "tests/mod.lisp")
+(type __req_test) -> number
+ok (error): (require "no-such-file-123.lisp") -> ^
+ok: '(1 2 3) -> (1 2 3)
+ok: '(x) -> (x)
+ok: 'x -> x
+ok: '(fn (x) (+ x 1)) -> (fn (x) (+ x 1))
+ok: (set f (fn (x) (+ x 1)))
+(f 3) -> 4
+ok: (set m (macro (x) (list + x x)))
+(m 3) -> 6
+ok: (set m (macro (x) (list + x x)))
+'(m 3) -> (m 3)
+ok (error): (set m (macro () (/ 1 0)))
+(m) -> ^
+ok (error): (set m (macro (x) (list 'f x)))\n(m 1) -> ^
+ok (error): (set m (macro () (list f)))
+(m) -> ^
+ok: (set f (fn (x) (cond ((> x 0) 1) (1 0))))
+(f 1) -> 1
+ok: (set f (fn (a b . rest) (list a b rest)))
+(f 1 2 3 4) -> (1 2 (3 4))
+ok: (set m (macro (a . rest) (list + a (car rest))))
+(m 1 2 3) -> 3
+ok: (cond ((> 2 3) 1) ((< 2 3) 2)) -> 2
+ok: (cond ((> 1 2) 1) ((< 1 2) (+ 1 2))) -> 3
+ok: (cond (else 42)) -> 42
+ok: (set x 5)
+x -> 5
+ok: (let (x 1 y 2) (+ x y)) -> 3
+ok: (let (i 0) (while (< i 3) (set i (+ i 1))) i) -> 3
+ok: (set p (cons 1 (list 2 3))) (setcar p 4) (car p) -> 4
+ok: `(a ,(+ 1 2)) -> (a 3)
+ok: (set y 10) `(foo ,y bar) -> (foo 10 bar)
+ok: `(1 ,(+ 2 3) 4) -> (1 5 4)
+ok: (set h (fn (x) (+ x 1)))
+(set g (fn (x) (h (+ x 2))))
+(set f (fn (x) (g (+ x 3))))
+(f 10) -> 16
+ok: (set h (fn (x) (list x)))
+(set g (fn (x) (+ (car (h x)) 1)))
+(set f (fn (x) (g (+ x 3))))
+(f 5) -> 9
+ok: (set f (fn (x) (+ x 1)))
+(type f) -> function
+ok: (set f (fn (x) (+ x 1)))
+(f 1)
+(f 2)
+(f 3)
+(f 4)
+(f 5)
+(type f) -> jit_func
+ok: (set f (fn (x) (+ x 1)))
+(f 1)
+(f 2)
+(f 3)
+(f 4)
+(f 5)
+(print f) -> <jit_func>
+ok (error): (parse 1) -> ^
+ok (error): (apply) -> ^
+ok (error): (/ 1 0) -> ^
+ok (error): ( -> ^
+ok (error): "abc -> ^
+ok (error): ) -> ^
+All tests passed.

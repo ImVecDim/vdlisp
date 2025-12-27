@@ -1,0 +1,311 @@
+// Implementation of a focused IR emitter used by build_func_ir.
+#include "jit/jit_ir_emitter.hpp"
+#include "nanbox.hpp"
+#include "helpers.hpp"
+
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Type.h>
+
+using namespace vdlisp;
+using namespace llvm;
+
+JITIREmitter::JITIREmitter(vdlisp::FuncData* func_, llvm::Function* F_, llvm::LLVMContext &context_)
+  : func(func_), F(F_), context(context_), ir(&F_->getEntryBlock())
+{
+    Ptr p = func->params;
+    int idx = 0;
+    while (p) {
+        if (p->get_type() == TSYMBOL) {
+            param_index[*p->get_symbol()] = idx++;
+            break;
+        }
+        PairData *ppd = p->get_pair();
+        Ptr pname = ppd->car;
+        if (pname && pname->get_type() == TSYMBOL) {
+            param_index[*pname->get_symbol()] = idx++;
+        }
+        p = ppd->cdr;
+    }
+}
+
+auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst*
+{
+    auto it = locals.find(name);
+    if (it != locals.end()) return it->second;
+    llvm::IRBuilder<> tmp(&F->getEntryBlock(), F->getEntryBlock().begin());
+    llvm::AllocaInst *a = tmp.CreateAlloca(llvm::Type::getDoubleTy(context));
+    locals[name] = a;
+    return a;
+}
+
+auto JITIREmitter::compileCond(vdlisp::Ptr clauses) -> llvm::Value*
+{
+    if (!clauses) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    std::vector<BasicBlock*> testBBs;
+    std::vector<BasicBlock*> bodyBBs;
+    std::vector<vdlisp::Ptr> bodies;
+    int idx = 0;
+    vdlisp::Ptr walk = clauses;
+    while (walk) {
+            vdlisp::Ptr clause = pair_car(walk);
+        vdlisp::Ptr body = clause ? clause->get_pair()->cdr : vdlisp::Ptr();
+        testBBs.push_back(BasicBlock::Create(context, "cond_test" + std::to_string(idx), F));
+        bodyBBs.push_back(BasicBlock::Create(context, "cond_body" + std::to_string(idx), F));
+        bodies.push_back(body);
+        walk = walk->get_pair()->cdr;
+        ++idx;
+    }
+    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "cond_cont", F);
+    if (testBBs.empty()) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    ir.CreateBr(testBBs[0]);
+
+    for (size_t i = 0; i < testBBs.size(); ++i) {
+        ir.SetInsertPoint(testBBs[i]);
+        vdlisp::Ptr w = clauses;
+        for (size_t k = 0; k < i; ++k) w = w->get_pair()->cdr;
+        vdlisp::Ptr clause_i = pair_car(w);
+        vdlisp::Ptr test = clause_i ? pair_car(clause_i) : vdlisp::Ptr();
+        llvm::Value *condv = emitExpr(test);
+        if (!condv) return nullptr;
+        llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+        llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
+        BasicBlock *next = (i + 1 < testBBs.size()) ? testBBs[i+1] : contBB;
+        ir.CreateCondBr(is_true, bodyBBs[i], next);
+    }
+
+    std::vector<llvm::Value*> vals;
+    for (size_t i = 0; i < bodyBBs.size(); ++i) {
+        ir.SetInsertPoint(bodyBBs[i]);
+        vdlisp::Ptr b = bodies[i];
+        llvm::Value *last = nullptr;
+        while (b) {
+            vdlisp::Ptr ex = pair_car(b);
+            llvm::Value *v = emitExpr(ex);
+            if (!v) return nullptr;
+            last = v;
+            b = b->get_pair()->cdr;
+        }
+        if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+        ir.CreateBr(contBB);
+        vals.push_back(last);
+    }
+
+    ir.SetInsertPoint(contBB);
+    llvm::PHINode *phi = ir.CreatePHI(llvm::Type::getDoubleTy(context), (int)vals.size());
+    for (size_t i = 0; i < vals.size(); ++i) phi->addIncoming(vals[i], bodyBBs[i]);
+    // If the test chain can fall through to the continuation without
+    // selecting a body (i.e. last test false), add an incoming value from
+    // the last test block representing `nil`/false (0.0) so the PHI node
+    // has an entry for that predecessor and the IR is well-formed.
+    if (!testBBs.empty()) {
+        llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+        phi->addIncoming(zero, testBBs.back());
+    }
+    return phi;
+}
+auto JITIREmitter::compileWhile(vdlisp::Ptr rest) -> llvm::Value*
+{
+    vdlisp::Ptr cond = pair_car(rest);
+    vdlisp::Ptr body = rest->get_pair()->cdr;
+    llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+
+    llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(context, "loop", F);
+    llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "loopbody", F);
+    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "loopcont", F);
+
+    ir.CreateBr(loopBB);
+    ir.SetInsertPoint(loopBB);
+    llvm::Value *condv = emitExpr(cond);
+    if (!condv) return nullptr;
+    llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
+    ir.CreateCondBr(is_true, bodyBB, contBB);
+
+    ir.SetInsertPoint(bodyBB);
+    llvm::Value *last = nullptr;
+    vdlisp::Ptr bb = body;
+    while (bb) {
+        vdlisp::Ptr ex = pair_car(bb);
+        llvm::Value *v = emitExpr(ex);
+        if (!v) return nullptr;
+        last = v;
+        bb = bb->get_pair()->cdr;
+    }
+    if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    ir.CreateBr(loopBB);
+
+    ir.SetInsertPoint(contBB);
+    return last;
+}
+
+auto JITIREmitter::compileLet(vdlisp::Ptr rest) -> llvm::Value*
+{
+    vdlisp::Ptr bindings = pair_car(rest);
+    vdlisp::Ptr letbody = rest->get_pair()->cdr;
+    vdlisp::Ptr b = bindings;
+    if (is_pair(b) && is_pair(pair_car(b))) {
+        while (b) {
+            vdlisp::Ptr pair = pair_car(b);
+            vdlisp::Ptr name = pair_car(pair);
+            vdlisp::Ptr val = pair_car(pair_cdr(pair));
+            if (!name || name->get_type() != vdlisp::TSYMBOL) return nullptr;
+            llvm::Value *v = emitExpr(val);
+            if (!v) return nullptr;
+            llvm::AllocaInst *a = ensure_local(*name->get_symbol());
+            ir.CreateStore(v, a);
+            b = pair_cdr(b);
+        }
+    } else {
+        while (b) {
+            vdlisp::Ptr name = pair_car(b);
+            if (!name || name->get_type() != vdlisp::TSYMBOL) return nullptr;
+            vdlisp::Ptr next = pair_cdr(b);
+            if (!next) return nullptr;
+            vdlisp::Ptr val = pair_car(next);
+            llvm::Value *v = emitExpr(val);
+            if (!v) return nullptr;
+            llvm::AllocaInst *a = ensure_local(*name->get_symbol());
+            ir.CreateStore(v, a);
+            b = pair_cdr(next);
+        }
+    }
+    llvm::Value *last = nullptr;
+    vdlisp::Ptr bb = letbody;
+    while (bb) {
+        vdlisp::Ptr ex = pair_car(bb);
+        llvm::Value *v = emitExpr(ex);
+        if (!v) return nullptr;
+        last = v;
+        bb = pair_cdr(bb);
+    }
+    if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    return last;
+}
+auto JITIREmitter::emitExpr(vdlisp::Ptr expr) -> llvm::Value*
+{
+    if (!expr) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    if (expr->get_type() == vdlisp::TNUMBER) {
+        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), expr->get_number());
+    }
+    if (expr->get_type() == vdlisp::TSYMBOL) {
+        auto it = param_index.find(*expr->get_symbol());
+        if (it != param_index.end()) {
+            int i = it->second;
+            llvm::Value *argptr = F->getArg(0);
+            llvm::Value *idxv = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
+            llvm::Value *gep = ir.CreateInBoundsGEP(llvm::Type::getDoubleTy(context), argptr, {idxv});
+            return ir.CreateLoad(llvm::Type::getDoubleTy(context), gep);
+        }
+        auto lit = locals.find(*expr->get_symbol());
+        if (lit != locals.end()) {
+            return ir.CreateLoad(llvm::Type::getDoubleTy(context), lit->second);
+        }
+        return nullptr;
+    }
+    if (expr->get_type() == vdlisp::TPAIR) {
+        vdlisp::PairData *pd = expr->get_pair();
+        vdlisp::Ptr op = pd->car;
+        vdlisp::Ptr rest = pd->cdr;
+        if (!op || op->get_type() != vdlisp::TSYMBOL) return nullptr;
+        std::string opname = *op->get_symbol();
+
+        if (opname == "cond") return compileCond(rest);
+        if (opname == "while") return compileWhile(rest);
+        if (opname == "let") return compileLet(rest);
+
+        std::vector<llvm::Value*> vals;
+        vdlisp::Ptr a = rest;
+        while (a) {
+                vdlisp::Ptr av = pair_car(a);
+            llvm::Value *v = emitExpr(av);
+            if (!v) return nullptr;
+            vals.push_back(v);
+            a = a->get_pair()->cdr;
+        }
+        if (opname == "+") {
+            if (vals.size() != 2) return nullptr;
+            return ir.CreateFAdd(vals[0], vals[1]);
+        } else if (opname == "*") {
+            if (vals.size() != 2) return nullptr;
+            return ir.CreateFMul(vals[0], vals[1]);
+        } else if (opname == "-") {
+            if (vals.size() != 2) return nullptr;
+            return ir.CreateFSub(vals[0], vals[1]);
+        } else if (opname == "/") {
+            if (vals.size() != 2) return nullptr;
+            return ir.CreateFDiv(vals[0], vals[1]);
+        }
+
+        if (opname == "<" || opname == ">" || opname == "<=" || opname == ">=" || opname == "=") {
+            if (vals.size() < 2) return nullptr;
+            llvm::Value *L = vals[0];
+            llvm::Value *R = vals[1];
+            llvm::Value *cmp = nullptr;
+            if (opname == "<")  cmp = ir.CreateFCmpOLT(L, R);
+            if (opname == ">")  cmp = ir.CreateFCmpOGT(L, R);
+            if (opname == "<=") cmp = ir.CreateFCmpOLE(L, R);
+            if (opname == ">=") cmp = ir.CreateFCmpOGE(L, R);
+            if (opname == "=") cmp = ir.CreateFCmpOEQ(L, R);
+            return ir.CreateSelect(cmp, llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 1.0), llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0));
+        }       //TODO >2 vals???
+        if (op && op->get_type() == vdlisp::TSYMBOL) {
+            const std::string *nm_ptr = op->get_symbol();
+            auto e = func->closure_env;
+            vdlisp::Ptr found;
+            while (e) {
+                auto it = e->map.find(*nm_ptr);
+                if (it != e->map.end()) { found = it->second; break; }
+                e = e->parent;
+            }
+            if (found && found->get_type() == vdlisp::TFUNC) {
+                vdlisp::FuncData *callee_fd = found->get_func();
+                if (!callee_fd) return nullptr;
+                std::string callee_name = "jit_fn_" + std::to_string(reinterpret_cast<uintptr_t>(callee_fd));
+                llvm::Module *M = F->getParent();
+                llvm::Type *dblTy = llvm::Type::getDoubleTy(context);
+                llvm::Type *dblPtr = llvm::PointerType::getUnqual(dblTy);
+                llvm::FunctionType *native_ft = llvm::FunctionType::get(dblTy, {dblPtr, llvm::Type::getInt32Ty(context)}, false);
+
+                llvm::Value *argArrayPtr = nullptr;
+                if (vals.empty()) {
+                    argArrayPtr = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(dblTy));
+                } else {
+                    llvm::IRBuilder<> tmp(&F->getEntryBlock(), F->getEntryBlock().begin());
+                    llvm::Value *arrSize = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (int)vals.size());
+                    llvm::AllocaInst *all = tmp.CreateAlloca(dblTy, arrSize);
+                    for (int i = 0; i < (int)vals.size(); ++i) {
+                        llvm::Value *idx = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
+                        llvm::Value *gep = ir.CreateInBoundsGEP(dblTy, all, {idx});
+                        ir.CreateStore(vals[i], gep);
+                    }
+                    argArrayPtr = all;
+                }
+                llvm::Value *argcV = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (int)vals.size());
+
+                if (callee_fd->compiled_code) {
+                    llvm::FunctionCallee fc = M->getOrInsertFunction(callee_name, native_ft);
+                    llvm::Value *callv = ir.CreateCall(fc, {argArrayPtr, argcV});
+                    return callv;
+                } else {
+                    llvm::Type *i8ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context));
+                    llvm::FunctionType *bridge_ft = llvm::FunctionType::get(dblTy, {i8ptr, dblPtr, llvm::Type::getInt32Ty(context)}, false);
+                    llvm::FunctionCallee bridge = M->getOrInsertFunction("VDLIST_call_from_jit", bridge_ft);
+                    llvm::Constant *fd_c = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), (uint64_t)callee_fd);
+                    llvm::Constant *fd_ptr = llvm::ConstantExpr::getIntToPtr(fd_c, i8ptr);
+                    llvm::Value *callv = ir.CreateCall(bridge, {fd_ptr, argArrayPtr, argcV});
+                    return callv;
+                }
+            }
+        }
+
+        return nullptr;
+    }
+    return nullptr;
+}
+
+
+
+auto JITIREmitter::finalize() -> llvm::Function*
+{
+    return F;
+}
