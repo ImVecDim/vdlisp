@@ -1,3 +1,3 @@
-#include "counted.hpp"
+#include "sptr.hpp"
 
-// counted<T> is a header-only template.
+// sptr<T> is a header-only template.

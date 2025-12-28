@@ -1,0 +1,13 @@
+(set i 0)
+(while (< i 10)
+  (set j 0)
+  (while (< j 10)
+    (set tmp (list))
+    (set k 0)
+    (while (< k 10)
+      (set tmp (cons (list k) tmp))
+      (set k (+ k 1)))
+    (set j (+ j 1)))
+  (set i (+ i 1)))
+
+(print "asan_test_ok")

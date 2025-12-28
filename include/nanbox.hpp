@@ -6,20 +6,20 @@
 #include <string>
 #include <unordered_map>
 
-#include "counted.hpp"
+#include "sptr.hpp"
 
 
 namespace vdlisp
 {
 
   class Value;
-  using Ptr = counted<Value*>;
+  using Ptr = sptr<Value>;
   class State;
   class Env;
 
   // Use plain function pointer types for primitives and C functions to avoid
   // the overhead of std::function (allocations / type-erasure / indirect calls).
-  using Prim = Ptr (*)(State &, Ptr, counted<Env*>);
+  using Prim = Ptr (*)(State &, Ptr, sptr<Env>);
   using CFunc = Ptr (*)(State &, Ptr);
 
   enum Type
@@ -62,16 +62,16 @@ namespace vdlisp
   // - num_call_count: counter for pure numeric calls
   // - compiled_code: a void* that holds the machine-code pointer returned by
   //                  the JITCompiler after successful compilation (nullptr if not compiled)
-  class FuncData { public: Ptr params; Ptr body; counted<Env*> closure_env; size_t call_count = 0; size_t num_call_count = 0; void* compiled_code = nullptr; bool jit_failed = false; };
+  class FuncData { public: Ptr params; Ptr body; sptr<Env> closure_env; size_t call_count = 0; size_t num_call_count = 0; void* compiled_code = nullptr; bool jit_failed = false; };
 
   // MacroData: macros are expanded by the interpreter at compile-time (no JIT)
-  class MacroData { public: Ptr params; Ptr body; counted<Env*> closure_env; };
+  class MacroData { public: Ptr params; Ptr body; sptr<Env> closure_env; };
 
   class Env
   {
   public:
     std::unordered_map<std::string, Ptr> map;
-    counted<Env*> parent;
+    sptr<Env> parent;
   };
 
   class Value

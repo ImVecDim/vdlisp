@@ -12,7 +12,6 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <cmath>
-#include <new>
 
 using namespace vdlisp;
 
@@ -46,25 +45,24 @@ State::State()
   bind_global("else", make_symbol("#t"));
 }
 
-// -------------------- State object pool allocators --------------------
+// -------------------- State allocators --------------------
 
 auto State::alloc_string(const std::string &s) -> std::string*
 {
-  std::string *p = string_pool.construct(s);
-  return p;
+  return new std::string(s);
 }
 
 auto State::alloc_pair(Ptr car, Ptr cdr) -> PairData*
 {
-  PairData *p = pair_pool.construct();
+  auto *p = new PairData();
   p->car = car;
   p->cdr = cdr;
   return p;
 }
 
-auto State::alloc_func(Ptr params, Ptr body, counted<Env*> env) -> FuncData*
+auto State::alloc_func(Ptr params, Ptr body, sptr<Env> env) -> FuncData*
 {
-  FuncData *f = func_pool.construct();
+  FuncData *f = new FuncData();
   f->params = params;
   f->body = body;
   f->closure_env = env;
@@ -75,9 +73,9 @@ auto State::alloc_func(Ptr params, Ptr body, counted<Env*> env) -> FuncData*
   return f;
 }
 
-auto State::alloc_macro(Ptr params, Ptr body, counted<Env*> env) -> MacroData*
+auto State::alloc_macro(Ptr params, Ptr body, sptr<Env> env) -> MacroData*
 {
-  MacroData *m = macro_pool.construct();
+  MacroData *m = new MacroData();
   m->params = params;
   m->body = body;
   m->closure_env = env;
@@ -87,8 +85,7 @@ auto State::alloc_macro(Ptr params, Ptr body, counted<Env*> env) -> MacroData*
 // Value and Env allocators
 auto State::alloc_value(Type t) -> Value*
 {
-  Value *v = value_pool.construct(t);
-  return v;
+  return new Value(t);
 }
 
 auto State::make_pooled_value(Type t) -> Ptr
@@ -99,23 +96,22 @@ auto State::make_pooled_value(Type t) -> Ptr
 
 auto State::alloc_env() -> Env*
 {
-  Env *e = env_pool.construct();
+  Env *e = new Env();
   e->parent = nullptr;
   e->map.clear();
   return e;
 }
 
-auto State::make_env(counted<Env*> parent) -> counted<Env*>
+auto State::make_env(sptr<Env> parent) -> sptr<Env>
 {
   Env *e = alloc_env();
   e->parent = parent;
-  return counted<Env*>(e);
+  return sptr<Env>(e);
 }
 
 void State::shutdown_and_purge_pools()
 {
-  // 1) Release runtime references so Value destructors can run while pooled
-  // objects are still valid.
+  // Release runtime references so reference-counted objects can be reclaimed.
   env_stack.clear();
   loaded_modules.clear();
   sources.clear();
@@ -124,36 +120,6 @@ void State::shutdown_and_purge_pools()
   symbol_intern.clear();
   current_expr.reset();
   global.reset();
-
-  // Best-effort: ask pools to return any completely-free blocks.
-  // Note: this may be a no-op if we never individually free chunks.
-  (void)macro_pool.purge_memory();
-  (void)pair_pool.purge_memory();
-  (void)func_pool.purge_memory();
-  (void)string_pool.purge_memory();
-  (void)value_pool.purge_memory();
-  (void)env_pool.purge_memory();
-
-  // IMPORTANT: do NOT destroy/free each object individually here.
-  // `boost::object_pool<T>::free/destroy` uses ordered_free with O(N) behavior;
-  // doing that per object can become effectively O(N^2) and look like a dead loop.
-  // Instead, destroy the entire pool, which performs a single linear scan over blocks.
-  // Destruction order matters: keep func_pool alive until after pairs/macros are destroyed,
-  // because releasing a function Value consults its FuncData. Also ensure func_pool
-  // remains alive while Value destructors run (value_pool destroyed first).
-  string_pool.~ExposedObjectPool<std::string>();
-  macro_pool.~ExposedObjectPool<MacroData>();
-  pair_pool.~ExposedObjectPool<PairData>();
-  value_pool.~ExposedObjectPool<Value>();
-  func_pool.~ExposedObjectPool<FuncData>();
-  env_pool.~ExposedObjectPool<Env>();
-
-  new (&func_pool) ExposedObjectPool<FuncData>();
-  new (&value_pool) ExposedObjectPool<Value>();
-  new (&pair_pool) ExposedObjectPool<PairData>();
-  new (&macro_pool) ExposedObjectPool<MacroData>();
-  new (&string_pool) ExposedObjectPool<std::string>();
-  new (&env_pool) ExposedObjectPool<Env>();
 }
 
 // global used by JIT bridge to access the interpreter State when native
@@ -201,13 +167,13 @@ auto State::make_prim(const Prim &fn) -> Ptr
   v->set_prim(fn);
   return v;
 }
-auto State::make_function(Ptr params, Ptr body, counted<Env*> env) -> Ptr
+auto State::make_function(Ptr params, Ptr body, sptr<Env> env) -> Ptr
 {
   Ptr v = make_pooled_value(TFUNC);
   v->set_func(alloc_func(params, body, env));
   return v;
 }
-auto State::make_macro(Ptr params, Ptr body, counted<Env*> env) -> Ptr
+auto State::make_macro(Ptr params, Ptr body, sptr<Env> env) -> Ptr
 {
   Ptr v = make_pooled_value(TMACRO);
   v->set_macro(alloc_macro(params, body, env));
@@ -243,7 +209,7 @@ void State::register_prim(const std::string &name, const Prim &fn)
   bind_global(name, make_prim(fn));
 }
 
-auto State::bind(Ptr sym, Ptr v, counted<Env*> env) -> Ptr
+auto State::bind(Ptr sym, Ptr v, sptr<Env> env) -> Ptr
 {
   if (!env)
     env = global;
@@ -253,7 +219,7 @@ auto State::bind(Ptr sym, Ptr v, counted<Env*> env) -> Ptr
   return v;
 }
 
-auto State::set(Ptr sym, Ptr v, counted<Env*> env) -> Ptr
+auto State::set(Ptr sym, Ptr v, sptr<Env> env) -> Ptr
 {
   if (!env)
     env = global;
@@ -279,7 +245,7 @@ void State::bind_global(const std::string &name, Ptr v)
   global->map[name] = v;
 }
 
-auto State::get_bound(const std::string &name, counted<Env*> env) -> Ptr
+auto State::get_bound(const std::string &name, sptr<Env> env) -> Ptr
 {
   auto e = env ? env : global;
   while (e)
@@ -302,7 +268,7 @@ auto State::get_bound(const std::string &name, counted<Env*> env) -> Ptr
 // -------------------- eval --------------------
 
 // Evaluate each element of a list and return a new list of evaluated values
-static auto eval_args(State &S, Ptr list, counted<Env*> env) -> Ptr
+static auto eval_args(State &S, Ptr list, sptr<Env> env) -> Ptr
 {
   Ptr head;
   Ptr *last = &head;
@@ -353,7 +319,7 @@ static void bind_params_to_env(
   }
 }
 
-auto State::eval(Ptr expr, counted<Env*> env) -> Ptr
+auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
 {
   // Keep track of current expression. On exception we leave current_expr set to the
   // failing expression so the top-level can report a source location.
@@ -423,7 +389,7 @@ auto State::eval(Ptr expr, counted<Env*> env) -> Ptr
       MacroData *md = fn->get_macro();
       Ptr params = md->params;
       Ptr body = md->body;
-      counted<Env*> closure_env = md->closure_env;
+      sptr<Env> closure_env = md->closure_env;
       auto e = make_env(closure_env);
       bind_params_to_env(e->map, params, cdr, /*fill_missing_with_nil=*/true);
       // compute call-site location and a one-frame call-chain entry
@@ -499,7 +465,7 @@ auto State::eval(Ptr expr, counted<Env*> env) -> Ptr
   }
 }
 
-auto State::call(Ptr fn, Ptr args, counted<Env*> env) -> Ptr
+auto State::call(Ptr fn, Ptr args, sptr<Env> env) -> Ptr
 {
   (void)env;
   if (!fn)
@@ -562,7 +528,7 @@ auto State::call(Ptr fn, Ptr args, counted<Env*> env) -> Ptr
             fd->jit_failed = true;
             Ptr params = fd->params;
             Ptr body = fd->body;
-            counted<Env*> closure_env = fd->closure_env;
+            sptr<Env> closure_env = fd->closure_env;
             auto e = make_env(closure_env ? closure_env : global);
             bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
             return do_list(body, e);
@@ -573,7 +539,7 @@ auto State::call(Ptr fn, Ptr args, counted<Env*> env) -> Ptr
     // create new env (fallback interpreter path)
     Ptr params = fd->params;
     Ptr body = fd->body;
-    counted<Env*> closure_env = fd->closure_env;
+    sptr<Env> closure_env = fd->closure_env;
     auto e = make_env(closure_env ? closure_env : global);
     // bind params (for functions, missing args stop binding as before)
     bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
@@ -604,7 +570,7 @@ auto State::call(Ptr fn, Ptr args, counted<Env*> env) -> Ptr
   throw std::runtime_error("not a function");
 }
 
-auto State::do_list(Ptr body, counted<Env*> env) -> Ptr
+auto State::do_list(Ptr body, sptr<Env> env) -> Ptr
 {
   Ptr res;
   while (body)

@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <functional>
 
-namespace vdlisp { class FuncData; class Value; class PairData; template <class T> class counted; using Ptr = counted<Value*>; }
+namespace vdlisp { class FuncData; class Value; class PairData; template <class T> class sptr; using Ptr = sptr<Value>; }
 
 class JITIREmitter {
 public:

@@ -2,7 +2,6 @@
 #define VDLISP__VDLISP__HPP
 
 #include "nanbox.hpp"
-#include <boost/pool/object_pool.hpp>
 #include <cstddef>
 #include <initializer_list>
 #include <string>
@@ -12,23 +11,16 @@
 namespace vdlisp
 {
 
-  template <class T>
-  struct ExposedObjectPool : boost::object_pool<T>
-  {
-    using boost::object_pool<T>::purge_memory;
-  };
-
   class State
   {
   public:
-    std::vector<counted<Env*>> env_stack; // not required, but useful
-    counted<Env*> global;
+    std::vector<sptr<Env>> env_stack; // not required, but useful
+    sptr<Env> global;
     std::unordered_map<std::string, Ptr> symbol_intern;
 
     State();
 
-    // Release runtime references and return pooled memory to the OS (best-effort).
-    // Intended to be called near program exit to make leak checkers' reports cleaner.
+    // Release runtime references (best-effort).
     void shutdown_and_purge_pools();
 
     // factory helpers
@@ -38,13 +30,13 @@ namespace vdlisp
     auto make_symbol(const std::string &s) -> Ptr;
     auto make_pair(Ptr car, Ptr cdr) -> Ptr;
     auto make_cfunc(const CFunc &fn) -> Ptr;
-    auto make_function(Ptr params, Ptr body, counted<Env*> env) -> Ptr;
+    auto make_function(Ptr params, Ptr body, sptr<Env> env) -> Ptr;
     auto make_prim(const Prim &fn) -> Ptr;
-    auto make_macro(Ptr params, Ptr body, counted<Env*> env) -> Ptr;
+    auto make_macro(Ptr params, Ptr body, sptr<Env> env) -> Ptr;
 
     // pooled helpers
     auto make_pooled_value(Type t) -> Ptr;
-    auto make_env(counted<Env*> parent = nullptr) -> counted<Env*>;
+    auto make_env(sptr<Env> parent = nullptr) -> sptr<Env>;
 
     // convenience helpers for constructing lists
     auto make_string_list(const std::vector<std::string> &items) -> Ptr;
@@ -55,9 +47,9 @@ namespace vdlisp
     // parsing / eval
     auto parse(const std::string &src, const std::string &name = "(string)") -> Ptr;
     auto parse_all(const std::string &src, const std::string &name = "(string)") -> Ptr;
-    auto eval(Ptr expr, counted<Env*> env) -> Ptr;
-    auto call(Ptr fn, Ptr args, counted<Env*> env = nullptr) -> Ptr;
-    auto do_list(Ptr body, counted<Env*> env) -> Ptr;
+    auto eval(Ptr expr, sptr<Env> env) -> Ptr;
+    auto call(Ptr fn, Ptr args, sptr<Env> env = nullptr) -> Ptr;
+    auto do_list(Ptr body, sptr<Env> env) -> Ptr;
 
     // source location helpers
     struct SourceLoc { std::string file; size_t line = 0; size_t col = 0; std::string label; };
@@ -80,33 +72,25 @@ namespace vdlisp
     auto get_source_line(const std::string &file, size_t line, std::string &out) const -> bool;
 
   private:
-    // Object pool allocation helpers (avoid raw new/delete)
+    // Allocation helpers
     auto alloc_string(const std::string &s) -> std::string*;
     auto alloc_pair(Ptr car, Ptr cdr) -> PairData*;
-    auto alloc_func(Ptr params, Ptr body, counted<Env*> env) -> FuncData*;
-    auto alloc_macro(Ptr params, Ptr body, counted<Env*> env) -> MacroData*;
+    auto alloc_func(Ptr params, Ptr body, sptr<Env> env) -> FuncData*;
+    auto alloc_macro(Ptr params, Ptr body, sptr<Env> env) -> MacroData*;
 
     // Pooled allocation helpers for Value and Env
     auto alloc_value(Type t) -> Value*;
     auto alloc_env() -> Env*;
-
-    // Boost pools owning runtime objects. Values store raw pointers into these pools.
-    ExposedObjectPool<std::string> string_pool;
-    ExposedObjectPool<PairData> pair_pool;
-    ExposedObjectPool<FuncData> func_pool;
-    ExposedObjectPool<MacroData> macro_pool;
-    ExposedObjectPool<Value> value_pool;
-    ExposedObjectPool<Env> env_pool;
 
   public:
     // helpers
     auto to_string(Ptr v) -> std::string;
     void register_builtin(const std::string &name, const CFunc &fn);
     void register_prim(const std::string &name, const Prim &fn);
-    auto get_bound(const std::string &name, counted<Env*> env) -> Ptr;
+    auto get_bound(const std::string &name, sptr<Env> env) -> Ptr;
     void bind_global(const std::string &name, Ptr v);
-    auto bind(Ptr sym, Ptr v, counted<Env*> env) -> Ptr;
-    auto set(Ptr sym, Ptr v, counted<Env*> env) -> Ptr;
+    auto bind(Ptr sym, Ptr v, sptr<Env> env) -> Ptr;
+    auto set(Ptr sym, Ptr v, sptr<Env> env) -> Ptr;
 
 
   };

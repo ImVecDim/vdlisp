@@ -49,16 +49,31 @@ Value::Value(Type t)
 }
 
 Value::~Value() {
-  // When using State-owned pools, Values do not own the pointed-to objects
-  // anymore; we only need to release non-memory resources such as JIT code.
+  // Values own their NaN-boxed payload objects.
   switch (get_type()) {
+    case TPAIR: {
+      delete get_pair();
+      break;
+    }
+    case TSTRING: {
+      delete get_string();
+      break;
+    }
+    case TSYMBOL: {
+      delete get_symbol();
+      break;
+    }
     case TFUNC: {
       FuncData* fd = get_func();
       if (fd && fd->compiled_code) {
-        // Release compiled JIT code associated with this function
         global_jit.releaseFunctionCode(fd->compiled_code);
         fd->compiled_code = nullptr;
       }
+      delete fd;
+      break;
+    }
+    case TMACRO: {
+      delete get_macro();
       break;
     }
     default:
