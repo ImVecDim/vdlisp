@@ -6,11 +6,10 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
 #include <string>
-#include <memory>
 #include <unordered_map>
 #include <functional>
 
-namespace vdlisp { class FuncData; using Ptr = std::shared_ptr<class Value>; class PairData; }
+namespace vdlisp { class FuncData; class Value; class PairData; template <class T> class counted; using Ptr = counted<Value*>; }
 
 class JITIREmitter {
 public:

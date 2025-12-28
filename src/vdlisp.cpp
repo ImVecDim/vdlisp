@@ -62,7 +62,7 @@ auto State::alloc_pair(Ptr car, Ptr cdr) -> PairData*
   return p;
 }
 
-auto State::alloc_func(Ptr params, Ptr body, std::shared_ptr<Env> env) -> FuncData*
+auto State::alloc_func(Ptr params, Ptr body, counted<Env*> env) -> FuncData*
 {
   FuncData *f = func_pool.construct();
   f->params = params;
@@ -75,7 +75,7 @@ auto State::alloc_func(Ptr params, Ptr body, std::shared_ptr<Env> env) -> FuncDa
   return f;
 }
 
-auto State::alloc_macro(Ptr params, Ptr body, std::shared_ptr<Env> env) -> MacroData*
+auto State::alloc_macro(Ptr params, Ptr body, counted<Env*> env) -> MacroData*
 {
   MacroData *m = macro_pool.construct();
   m->params = params;
@@ -94,7 +94,7 @@ auto State::alloc_value(Type t) -> Value*
 auto State::make_pooled_value(Type t) -> Ptr
 {
   Value *v = alloc_value(t);
-  return Ptr(v, [](Value*){});
+  return Ptr(v);
 }
 
 auto State::alloc_env() -> Env*
@@ -105,11 +105,11 @@ auto State::alloc_env() -> Env*
   return e;
 }
 
-auto State::make_env(std::shared_ptr<Env> parent) -> std::shared_ptr<Env>
+auto State::make_env(counted<Env*> parent) -> counted<Env*>
 {
   Env *e = alloc_env();
   e->parent = parent;
-  return std::shared_ptr<Env>(e, [](Env*){});
+  return counted<Env*>(e);
 }
 
 void State::shutdown_and_purge_pools()
@@ -201,13 +201,13 @@ auto State::make_prim(const Prim &fn) -> Ptr
   v->set_prim(fn);
   return v;
 }
-auto State::make_function(Ptr params, Ptr body, std::shared_ptr<Env> env) -> Ptr
+auto State::make_function(Ptr params, Ptr body, counted<Env*> env) -> Ptr
 {
   Ptr v = make_pooled_value(TFUNC);
   v->set_func(alloc_func(params, body, env));
   return v;
 }
-auto State::make_macro(Ptr params, Ptr body, std::shared_ptr<Env> env) -> Ptr
+auto State::make_macro(Ptr params, Ptr body, counted<Env*> env) -> Ptr
 {
   Ptr v = make_pooled_value(TMACRO);
   v->set_macro(alloc_macro(params, body, env));
@@ -243,7 +243,7 @@ void State::register_prim(const std::string &name, const Prim &fn)
   bind_global(name, make_prim(fn));
 }
 
-auto State::bind(Ptr sym, Ptr v, std::shared_ptr<Env> env) -> Ptr
+auto State::bind(Ptr sym, Ptr v, counted<Env*> env) -> Ptr
 {
   if (!env)
     env = global;
@@ -253,7 +253,7 @@ auto State::bind(Ptr sym, Ptr v, std::shared_ptr<Env> env) -> Ptr
   return v;
 }
 
-auto State::set(Ptr sym, Ptr v, std::shared_ptr<Env> env) -> Ptr
+auto State::set(Ptr sym, Ptr v, counted<Env*> env) -> Ptr
 {
   if (!env)
     env = global;
@@ -279,7 +279,7 @@ void State::bind_global(const std::string &name, Ptr v)
   global->map[name] = v;
 }
 
-auto State::get_bound(const std::string &name, std::shared_ptr<Env> env) -> Ptr
+auto State::get_bound(const std::string &name, counted<Env*> env) -> Ptr
 {
   auto e = env ? env : global;
   while (e)
@@ -302,7 +302,7 @@ auto State::get_bound(const std::string &name, std::shared_ptr<Env> env) -> Ptr
 // -------------------- eval --------------------
 
 // Evaluate each element of a list and return a new list of evaluated values
-static auto eval_args(State &S, Ptr list, std::shared_ptr<Env> env) -> Ptr
+static auto eval_args(State &S, Ptr list, counted<Env*> env) -> Ptr
 {
   Ptr head;
   Ptr *last = &head;
@@ -353,7 +353,7 @@ static void bind_params_to_env(
   }
 }
 
-auto State::eval(Ptr expr, std::shared_ptr<Env> env) -> Ptr
+auto State::eval(Ptr expr, counted<Env*> env) -> Ptr
 {
   // Keep track of current expression. On exception we leave current_expr set to the
   // failing expression so the top-level can report a source location.
@@ -423,7 +423,7 @@ auto State::eval(Ptr expr, std::shared_ptr<Env> env) -> Ptr
       MacroData *md = fn->get_macro();
       Ptr params = md->params;
       Ptr body = md->body;
-      std::shared_ptr<Env> closure_env = md->closure_env;
+      counted<Env*> closure_env = md->closure_env;
       auto e = make_env(closure_env);
       bind_params_to_env(e->map, params, cdr, /*fill_missing_with_nil=*/true);
       // compute call-site location and a one-frame call-chain entry
@@ -499,7 +499,7 @@ auto State::eval(Ptr expr, std::shared_ptr<Env> env) -> Ptr
   }
 }
 
-auto State::call(Ptr fn, Ptr args, std::shared_ptr<Env> env) -> Ptr
+auto State::call(Ptr fn, Ptr args, counted<Env*> env) -> Ptr
 {
   (void)env;
   if (!fn)
@@ -562,7 +562,7 @@ auto State::call(Ptr fn, Ptr args, std::shared_ptr<Env> env) -> Ptr
             fd->jit_failed = true;
             Ptr params = fd->params;
             Ptr body = fd->body;
-            std::shared_ptr<Env> closure_env = fd->closure_env;
+            counted<Env*> closure_env = fd->closure_env;
             auto e = make_env(closure_env ? closure_env : global);
             bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
             return do_list(body, e);
@@ -573,7 +573,7 @@ auto State::call(Ptr fn, Ptr args, std::shared_ptr<Env> env) -> Ptr
     // create new env (fallback interpreter path)
     Ptr params = fd->params;
     Ptr body = fd->body;
-    std::shared_ptr<Env> closure_env = fd->closure_env;
+    counted<Env*> closure_env = fd->closure_env;
     auto e = make_env(closure_env ? closure_env : global);
     // bind params (for functions, missing args stop binding as before)
     bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
@@ -604,7 +604,7 @@ auto State::call(Ptr fn, Ptr args, std::shared_ptr<Env> env) -> Ptr
   throw std::runtime_error("not a function");
 }
 
-auto State::do_list(Ptr body, std::shared_ptr<Env> env) -> Ptr
+auto State::do_list(Ptr body, counted<Env*> env) -> Ptr
 {
   Ptr res;
   while (body)

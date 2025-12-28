@@ -82,7 +82,7 @@ auto JITCompiler::getContext() -> llvm::LLVMContext& {
 }
 
 // helper: scan an AST and collect TFUNC pointers referenced by symbol calls
-static void collect_called_funcs(vdlisp::Ptr expr, std::vector<vdlisp::FuncData*> &out, std::shared_ptr<vdlisp::Env> closure) {
+static void collect_called_funcs(vdlisp::Ptr expr, std::vector<vdlisp::FuncData*> &out, vdlisp::counted<vdlisp::Env*> closure) {
     using namespace vdlisp;
     if (!expr) return;
     if (expr->get_type() == TPAIR) {

@@ -11,7 +11,7 @@ extern "C" auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, int argc
         if (!S) return std::numeric_limits<double>::quiet_NaN();
         auto* fd = reinterpret_cast<FuncData*>(funcdata_ptr);
         if (!fd) return std::numeric_limits<double>::quiet_NaN();
-        Ptr fptr = std::make_shared<Value>(TFUNC);
+        Ptr fptr = S->make_pooled_value(TFUNC);
         fptr->set_func(fd);
         Ptr head;
         Ptr *last = &head;

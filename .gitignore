@@ -1,6 +1,8 @@
 # Build directories
 /build/
+/build-asan
 */build/
+/tmp/
 
 # Executables
 vdlisp

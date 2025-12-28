@@ -240,7 +240,6 @@ auto list_of(State &S, std::initializer_list<Ptr> items) -> Ptr
   Ptr *last = &head;
   for (auto &it : items)
   {
-    *last = std::make_shared<Value>(TPAIR);
     *last = S.make_pair(it, Ptr());
     PairData *pd = (*last)->get_pair();
     last = &pd->cdr;

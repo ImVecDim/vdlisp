@@ -25,9 +25,6 @@ VDLISP__BIN=${VDLISP__BIN:-build/vdlisp}
   fi
 }
 
-# Interpreter binary (allow override)
-VDLISP__BIN=${VDLISP__BIN:-build/vdlisp}
-
 # Test cases: each item is "<expr>" "<expected>".
 # If expected starts with 'err:' we assert the interpreter prints an error
 # containing the substring after 'err:'. For error cases we also assert the
