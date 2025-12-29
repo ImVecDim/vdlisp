@@ -55,16 +55,18 @@ auto State::alloc_string(const std::string &s) -> StringData*
 auto State::alloc_pair(Value car, Value cdr) -> PairData*
 {
   auto *p = new PairData();
-  p->car = car;
-  p->cdr = cdr;
+  // Move values into the pair to avoid extra refcount increments/decrements
+  p->car = std::move(car);
+  p->cdr = std::move(cdr);
   return p;
 }
 
 auto State::alloc_func(Value params, Value body, Env *env) -> FuncData*
 {
   FuncData *f = new FuncData();
-  f->params = params;
-  f->body = body;
+  // Move parameters/body to avoid extra refcount operations
+  f->params = std::move(params);
+  f->body = std::move(body);
   f->closure_env = env;
   if (env) retain_env(env);
   f->call_count = 0;
@@ -77,8 +79,9 @@ auto State::alloc_func(Value params, Value body, Env *env) -> FuncData*
 auto State::alloc_macro(Value params, Value body, Env *env) -> MacroData*
 {
   MacroData *m = new MacroData();
-  m->params = params;
-  m->body = body;
+  // Move parameters/body to avoid extra refcount operations
+  m->params = std::move(params);
+  m->body = std::move(body);
   m->closure_env = env;
   if (env) retain_env(env);
   return m;
@@ -264,7 +267,8 @@ auto State::bind(Value sym, Value v, Env *env) -> Value
     env = global;
   if (!sym || sym->get_type() != TSYMBOL)
     throw std::runtime_error("bind expects a symbol");
-  env->map[*sym->get_symbol()] = v;
+  // Move into the map to avoid incrementing/decrementing refcounts unnecessarily
+  env->map[*sym->get_symbol()] = std::move(v);
   return v;
 }
 
@@ -279,7 +283,8 @@ auto State::set(Value sym, Value v, Env *env) -> Value
     auto it = e->map.find(key);
     if (it != e->map.end())
     {
-      it->second = v;
+      // Move into the existing slot to avoid extra retain/release
+      it->second = std::move(v);
       return v;
     }
     e = e->parent;
@@ -291,7 +296,8 @@ auto State::set(Value sym, Value v, Env *env) -> Value
 
 void State::bind_global(const std::string &name, Value v)
 {
-  global->map[name] = v;
+  // Move the temporary into the map to avoid a redundant copy/retain
+  global->map[name] = std::move(v);
 }
 
 auto State::get_bound(const std::string &name, Env *env) -> Value

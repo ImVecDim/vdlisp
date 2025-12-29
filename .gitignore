@@ -45,8 +45,7 @@ __pycache__/
 *.pyc
 
 # Logs and profiling
-perf.data
-perf.data.old
+perf*
 
 # Coverage and sanitizer outputs
 *.gcda
