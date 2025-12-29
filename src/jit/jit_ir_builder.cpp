@@ -33,16 +33,9 @@ auto build_func_ir(vdlisp::FuncData* func, llvm::Module &M, llvm::LLVMContext &c
     llvm::Value *lastv = nullptr;
     while (body) {
         vdlisp::Value car = pair_car(body);
-        if (is_pair(car) && is_symbol(pair_car(car), "cond")) {
-            vdlisp::Value clauses = pair_cdr(car);
-            llvm::Value *cv = emitter.compileCond(clauses);
-            if (!cv) return nullptr;
-            lastv = cv;
-        } else {
-            llvm::Value *v = emitter.emitExpr(car);
-            if (!v) return nullptr;
-            lastv = v;
-        }
+        llvm::Value *v = emitter.emitExpr(car);
+        if (!v) return nullptr;
+        lastv = v;
         body = pair_cdr(body);
     }
     if (!lastv) lastv = ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);

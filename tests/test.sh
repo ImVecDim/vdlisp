@@ -193,4 +193,21 @@ for ((i=0;i<${#TESTS[@]};i+=2)); do
   run_one "${TESTS[i]}" "${TESTS[i+1]}"
 done
 
+# Run JIT control forms script to exercise cond/let/while compiled paths
+{
+  echo "Running JIT control forms script..."
+  out=$("$VDLISP__BIN" tests/jit_control_forms.lisp 2>&1 || true)
+  if ! echo "$out" | grep -Fq "COND_DONE"; then
+    echo "FAILED: jit control forms (cond)"; echo "$out"; exit 1; fi
+  if ! echo "$out" | grep -Fq "LET_DONE"; then
+    echo "FAILED: jit control forms (let)"; echo "$out"; exit 1; fi
+  if ! echo "$out" | grep -Fq "WHILE_DONE"; then
+    echo "FAILED: jit control forms (while)"; echo "$out"; exit 1; fi
+  if ! echo "$out" | grep -Fq "jit_func"; then
+    echo "FAILED: JIT not triggered"; echo "$out"; exit 1; fi
+  if ! echo "$out" | grep -Fq "<jit_func>"; then
+    echo "FAILED: JIT print form not found"; echo "$out"; exit 1; fi
+  echo "ok: jit control forms script"
+}
+
 echo "All tests passed."
