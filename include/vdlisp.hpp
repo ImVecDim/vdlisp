@@ -14,8 +14,8 @@ namespace vdlisp
   class State
   {
   public:
-    std::vector<sptr<Env>> env_stack; // not required, but useful
-    sptr<Env> global;
+    std::vector<Env*> env_stack; // not required, but useful
+    Env *global = nullptr;
     std::unordered_map<std::string, Value> symbol_intern;
 
     State();
@@ -30,13 +30,13 @@ namespace vdlisp
     auto make_symbol(const std::string &s) -> Value;
     auto make_pair(Value car, Value cdr) -> Value;
     auto make_cfunc(const CFunc &fn) -> Value;
-    auto make_function(Value params, Value body, sptr<Env> env) -> Value;
+    auto make_function(Value params, Value body, Env *env) -> Value;
     auto make_prim(const Prim &fn) -> Value;
-    auto make_macro(Value params, Value body, sptr<Env> env) -> Value;
+    auto make_macro(Value params, Value body, Env *env) -> Value;
 
     // pooled helpers
     auto make_pooled_value(Type t) -> Value;
-    auto make_env(sptr<Env> parent = nullptr) -> sptr<Env>;
+    auto make_env(Env *parent = nullptr) -> Env*;
 
     // convenience helpers for constructing lists
     auto make_string_list(const std::vector<std::string> &items) -> Value;
@@ -47,9 +47,9 @@ namespace vdlisp
     // parsing / eval
     auto parse(const std::string &src, const std::string &name = "(string)") -> Value;
     auto parse_all(const std::string &src, const std::string &name = "(string)") -> Value;
-    auto eval(Value expr, sptr<Env> env) -> Value;
-    auto call(Value fn, Value args, sptr<Env> env = nullptr) -> Value;
-    auto do_list(Value body, sptr<Env> env) -> Value;
+    auto eval(Value expr, Env *env) -> Value;
+    auto call(Value fn, Value args, Env *env = nullptr) -> Value;
+    auto do_list(Value body, Env *env) -> Value;
 
     // source location helpers
     struct SourceLoc { std::string file; size_t line = 0; size_t col = 0; std::string label; };
@@ -75,8 +75,8 @@ namespace vdlisp
     // Allocation helpers
     auto alloc_string(const std::string &s) -> StringData*;
     auto alloc_pair(Value car, Value cdr) -> PairData*;
-    auto alloc_func(Value params, Value body, sptr<Env> env) -> FuncData*;
-    auto alloc_macro(Value params, Value body, sptr<Env> env) -> MacroData*;
+    auto alloc_func(Value params, Value body, Env *env) -> FuncData*;
+    auto alloc_macro(Value params, Value body, Env *env) -> MacroData*;
 
     // Pooled allocation helpers for Value and Env
     auto alloc_env() -> Env*;
@@ -86,10 +86,10 @@ namespace vdlisp
     auto to_string(Value v) -> std::string;
     void register_builtin(const std::string &name, const CFunc &fn);
     void register_prim(const std::string &name, const Prim &fn);
-    auto get_bound(const std::string &name, sptr<Env> env) -> Value;
+    auto get_bound(const std::string &name, Env *env) -> Value;
     void bind_global(const std::string &name, Value v);
-    auto bind(Value sym, Value v, sptr<Env> env) -> Value;
-    auto set(Value sym, Value v, sptr<Env> env) -> Value;
+    auto bind(Value sym, Value v, Env *env) -> Value;
+    auto set(Value sym, Value v, Env *env) -> Value;
 
 
   };

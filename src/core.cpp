@@ -188,13 +188,13 @@ void register_core(State &S)
   register_require(S);
 
   // --- prims ---
-  S.register_prim("quote", [](State &, Value args, sptr<Env>) -> Value {
+  S.register_prim("quote", [](State &, Value args, Env *) -> Value {
     return pair_car(args);
   });
-  S.register_prim("unquote", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("unquote", [](State &S, Value args, Env *env) -> Value {
     return pair_car(args) ? S.eval(pair_car(args), env) : Value();
   });
-  S.register_prim("quasiquote", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("quasiquote", [](State &S, Value args, Env *env) -> Value {
     std::function<Value(Value, int)> qq_expand = [&](Value expr, int depth) -> Value {
       if (!expr)
         return {};
@@ -225,25 +225,26 @@ void register_core(State &S)
     return qq_expand(pair_car(args), 1);
   });
   // `if` removed as a primitive; provide it via a macro implemented using `cond`.
-  S.register_prim("set", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("set", [](State &S, Value args, Env *env) -> Value {
     Value sym = pair_car(args);
     Value valexpr = pair_car(pair_cdr(args));
     Value val = S.eval(valexpr, env);
     return S.set(sym, val, env);
   });
-  S.register_prim("fn", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("fn", [](State &S, Value args, Env *env) -> Value {
     Value params = pair_car(args);
     Value body = pair_cdr(args);
     return S.make_function(params, body, env);
   });
-  S.register_prim("macro", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("macro", [](State &S, Value args, Env *env) -> Value {
     Value params = pair_car(args);
     Value body = pair_cdr(args);
     return S.make_macro(params, body, env);
   });
-  S.register_prim("let", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("let", [](State &S, Value args, Env *env) -> Value {
     Value vars = pair_car(args);
-    auto e = S.make_env(env);
+    Env *e = S.make_env(env);
+    EnvGuard eg(e);
     while (vars)
     {
       Value sym = pair_car(vars);
@@ -255,7 +256,7 @@ void register_core(State &S)
     }
     return S.do_list(pair_cdr(args), e);
   });
-  S.register_prim("while", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("while", [](State &S, Value args, Env *env) -> Value {
     Value cond = pair_car(args);
     Value body = pair_cdr(args);
     Value res;
@@ -268,7 +269,7 @@ void register_core(State &S)
   // cond special form: evaluate clauses sequentially; for the first true
   // test evaluate and return the body. Implemented directly to avoid
   // depending on `if` (which may be provided at the language level as a macro).
-  S.register_prim("cond", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("cond", [](State &S, Value args, Env *env) -> Value {
     Value clauses = args;
     while (clauses) {
       Value clause = pair_car(clauses);
@@ -286,7 +287,7 @@ void register_core(State &S)
   // Provide `if` as a language-level macro implemented via `cond`.
   // This creates a proper TMACRO binding in the global environment so user
   // scripts can rely on `if` even though it's not a primitive.
-  S.register_prim("apply", [](State &S, Value args, sptr<Env> env) -> Value {
+  S.register_prim("apply", [](State &S, Value args, Env *env) -> Value {
     Value fnexpr = pair_car(args);
     if (!fnexpr)
       throw std::runtime_error("apply requires a function");

@@ -250,13 +250,18 @@ auto JITIREmitter::emitExpr(vdlisp::Value expr) -> llvm::Value*
         }       //TODO >2 vals???
         if (op && op->get_type() == vdlisp::TSYMBOL) {
             const std::string *nm_ptr = op->get_symbol();
-            auto e = func->closure_env;
+            Env *e = func->closure_env;
+            if (e) retain_env(e);
             vdlisp::Value found;
             while (e) {
                 auto it = e->map.find(*nm_ptr);
                 if (it != e->map.end()) { found = it->second; break; }
-                e = e->parent;
+                Env *next = e->parent;
+                if (next) retain_env(next);
+                release_env(e);
+                e = next;
             }
+            if (e) release_env(e);
             if (found && found->get_type() == vdlisp::TFUNC) {
                 vdlisp::FuncData *callee_fd = found->get_func();
                 if (!callee_fd) return nullptr;

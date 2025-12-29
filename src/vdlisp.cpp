@@ -60,12 +60,13 @@ auto State::alloc_pair(Value car, Value cdr) -> PairData*
   return p;
 }
 
-auto State::alloc_func(Value params, Value body, sptr<Env> env) -> FuncData*
+auto State::alloc_func(Value params, Value body, Env *env) -> FuncData*
 {
   FuncData *f = new FuncData();
   f->params = params;
   f->body = body;
   f->closure_env = env;
+  if (env) retain_env(env);
   f->call_count = 0;
   f->num_call_count = 0;
   f->compiled_code = nullptr;
@@ -73,12 +74,13 @@ auto State::alloc_func(Value params, Value body, sptr<Env> env) -> FuncData*
   return f;
 }
 
-auto State::alloc_macro(Value params, Value body, sptr<Env> env) -> MacroData*
+auto State::alloc_macro(Value params, Value body, Env *env) -> MacroData*
 {
   MacroData *m = new MacroData();
   m->params = params;
   m->body = body;
   m->closure_env = env;
+  if (env) retain_env(env);
   return m;
 }
 
@@ -96,11 +98,12 @@ auto State::alloc_env() -> Env*
   return e;
 }
 
-auto State::make_env(sptr<Env> parent) -> sptr<Env>
+auto State::make_env(Env *parent) -> Env*
 {
   Env *e = alloc_env();
   e->parent = parent;
-  return sptr<Env>(e);
+  if (parent) retain_env(parent);
+  return e;
 }
 
 void State::shutdown_and_purge_pools()
@@ -112,10 +115,10 @@ void State::shutdown_and_purge_pools()
     Value &v = kv.second;
     if (v && v->get_type() == TFUNC) {
       FuncData *fd = v->get_func();
-      if (fd) fd->closure_env.reset();
+      if (fd && fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
     } else if (v && v->get_type() == TMACRO) {
       MacroData *md = v->get_macro();
-      if (md) md->closure_env.reset();
+      if (md && md->closure_env) { release_env(md->closure_env); md->closure_env = nullptr; }
     }
     // Reset the Value to trigger release of referenced payloads
     v = Value();
@@ -123,33 +126,39 @@ void State::shutdown_and_purge_pools()
 
   // Walk the global environment chain and clear maps / parent pointers
   if (global) {
-    std::vector<sptr<Env>> q;
+    std::vector<Env*> q;
+    // retain to keep the chain alive while we iterate
+    retain_env(global);
     q.push_back(global);
     for (size_t i = 0; i < q.size(); ++i) {
       auto e = q[i];
       if (!e) continue;
       // enqueue parent (if any) to ensure we visit the whole chain
-      if (e->parent) q.push_back(e->parent);
+      if (e->parent) { retain_env(e->parent); q.push_back(e->parent); }
       // clear function closure_envs for values stored in env maps
       for (auto &mkv : e->map) {
         Value &val = mkv.second;
         if (val && val->get_type() == TFUNC) {
           FuncData *fd = val->get_func();
-          if (fd) fd->closure_env.reset();
+          if (fd && fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
         } else if (val && val->get_type() == TMACRO) {
           MacroData *md = val->get_macro();
-          if (md) md->closure_env.reset();
+          if (md && md->closure_env) { release_env(md->closure_env); md->closure_env = nullptr; }
         }
         val = Value();
       }
       e->map.clear();
-      e->parent.reset();
+      // release the child's hold on its parent (the parent itself is retained in `q`)
+      if (e->parent) { release_env(e->parent); e->parent = nullptr; }
     }
+    // release retained queue entries
+    for (auto *p : q) release_env(p);
   }
 
   // Clear other runtime caches and containers
+  for (auto *e : env_stack) release_env(e);
   env_stack.clear();
-  global.reset();
+  if (global) { release_env(global); global = nullptr; }
 
   for (auto &kv : loaded_modules) kv.second = Value();
   loaded_modules.clear();
@@ -207,13 +216,13 @@ auto State::make_prim(const Prim &fn) -> Value
   v->set_prim(fn);
   return v;
 }
-auto State::make_function(Value params, Value body, sptr<Env> env) -> Value
+auto State::make_function(Value params, Value body, Env *env) -> Value
 {
   Value v = make_pooled_value(TFUNC);
   v->set_func(alloc_func(params, body, env));
   return v;
 }
-auto State::make_macro(Value params, Value body, sptr<Env> env) -> Value
+auto State::make_macro(Value params, Value body, Env *env) -> Value
 {
   Value v = make_pooled_value(TMACRO);
   v->set_macro(alloc_macro(params, body, env));
@@ -249,7 +258,7 @@ void State::register_prim(const std::string &name, const Prim &fn)
   bind_global(name, make_prim(fn));
 }
 
-auto State::bind(Value sym, Value v, sptr<Env> env) -> Value
+auto State::bind(Value sym, Value v, Env *env) -> Value
 {
   if (!env)
     env = global;
@@ -259,7 +268,7 @@ auto State::bind(Value sym, Value v, sptr<Env> env) -> Value
   return v;
 }
 
-auto State::set(Value sym, Value v, sptr<Env> env) -> Value
+auto State::set(Value sym, Value v, Env *env) -> Value
 {
   if (!env)
     env = global;
@@ -285,7 +294,7 @@ void State::bind_global(const std::string &name, Value v)
   global->map[name] = v;
 }
 
-auto State::get_bound(const std::string &name, sptr<Env> env) -> Value
+auto State::get_bound(const std::string &name, Env *env) -> Value
 {
   auto e = env ? env : global;
   while (e)
@@ -308,7 +317,7 @@ auto State::get_bound(const std::string &name, sptr<Env> env) -> Value
 // -------------------- eval --------------------
 
 // Evaluate each element of a list and return a new list of evaluated values
-static auto eval_args(State &S, Value list, sptr<Env> env) -> Value
+static auto eval_args(State &S, Value list, Env *env) -> Value
 {
   Value head;
   Value *last = &head;
@@ -359,7 +368,7 @@ static void bind_params_to_env(
   }
 }
 
-auto State::eval(Value expr, sptr<Env> env) -> Value
+auto State::eval(Value expr, Env *env) -> Value
 {
   // Keep track of current expression. On exception we leave current_expr set to the
   // failing expression so the top-level can report a source location.
@@ -429,8 +438,9 @@ auto State::eval(Value expr, sptr<Env> env) -> Value
       MacroData *md = fn->get_macro();
       Value params = md->params;
       Value body = md->body;
-      sptr<Env> closure_env = md->closure_env;
-      auto e = make_env(closure_env);
+      Env *closure_env = md->closure_env;
+      Env *e = make_env(closure_env);
+      EnvGuard eg(e);
       bind_params_to_env(e->map, params, cdr, /*fill_missing_with_nil=*/true);
       // compute call-site location and a one-frame call-chain entry
       State::SourceLoc call_loc;
@@ -505,7 +515,7 @@ auto State::eval(Value expr, sptr<Env> env) -> Value
   }
 }
 
-auto State::call(Value fn, Value args, sptr<Env> env) -> Value
+auto State::call(Value fn, Value args, Env *env) -> Value
 {
   (void)env;
   if (!fn)
@@ -568,8 +578,9 @@ auto State::call(Value fn, Value args, sptr<Env> env) -> Value
             fd->jit_failed = true;
             Value params = fd->params;
             Value body = fd->body;
-            sptr<Env> closure_env = fd->closure_env;
-            auto e = make_env(closure_env ? closure_env : global);
+            Env *closure_env = fd->closure_env;
+            Env *e = make_env(closure_env ? closure_env : global);
+            EnvGuard eg(e);
             bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
             return do_list(body, e);
         }
@@ -579,8 +590,9 @@ auto State::call(Value fn, Value args, sptr<Env> env) -> Value
     // create new env (fallback interpreter path)
     Value params = fd->params;
     Value body = fd->body;
-    sptr<Env> closure_env = fd->closure_env;
-    auto e = make_env(closure_env ? closure_env : global);
+    Env *closure_env = fd->closure_env;
+    Env *e = make_env(closure_env ? closure_env : global);
+    EnvGuard eg(e);
     // bind params (for functions, missing args stop binding as before)
     bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
     // evaluate function body with call-chain annotation so errors report the call site
@@ -610,7 +622,7 @@ auto State::call(Value fn, Value args, sptr<Env> env) -> Value
   throw std::runtime_error("not a function");
 }
 
-auto State::do_list(Value body, sptr<Env> env) -> Value
+auto State::do_list(Value body, Env *env) -> Value
 {
   Value res;
   while (body)

@@ -43,6 +43,25 @@
   - 编辑 `CMakeLists.txt` 或在命令行添加 `-DCMAKE_CXX_FLAGS="-fsanitize=address -g"`，然后 `cmake --build build`
   - 运行时示例：`ASAN_OPTIONS=detect_leaks=1 build/vdlisp`
 
+### 内存与生命周期（Env 引用计数与 EnvGuard）
+
+- 本项目对 `Env` 使用显式引用计数（继承自 `RcBase`），通过 `retain_env` / `release_env` 管理引用；`FuncData` / `MacroData` 的 `closure_env` 在分配时会 `retain`，在销毁时会 `release`。  
+- 为保证异常安全和避免临时引用泄漏，引入了 `EnvGuard`（RAII）：在你需要暂时持有 `Env*` 时创建 `EnvGuard`，作用域结束时自动 `release`。示例：
+
+```cpp
+Env *e = S.make_env(parent);
+EnvGuard eg(e); // 作用域结束时自动 release
+// 使用 e
+```
+
+- 注意事项与建议：
+  - **循环引用不会被引用计数回收**（这是引用计数的固有限制）。在长期运行的场景下，尽量避免构造长寿命的循环结构；程序退出时应调用 `State::shutdown_and_purge_pools()` 来断开常见循环（仓库已实现相关断开逻辑）。
+  - 当前引用计数为 **非原子**（非线程安全）。若计划引入多线程访问，应改用原子计数或外部同步。  
+
+如果需要，我可以添加：
+- 用于验证引用计数行为的 debug-only 断言或单元测试；或
+- 一个简单的长期运行/循环引用示例脚本，以及用于监控内存增长的基准脚本。
+
 ## 构建
 
 项目使用 CMake 作为首选构建方式。常用命令如下：

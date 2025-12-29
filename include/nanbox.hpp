@@ -6,7 +6,6 @@
 #include <bit>
 #include <string>
 #include <unordered_map>
-#include "sptr.hpp"
 
 
 namespace vdlisp
@@ -23,7 +22,7 @@ namespace vdlisp
 
   // Use plain function pointer types for primitives and C functions to avoid
   // the overhead of std::function (allocations / type-erasure / indirect calls).
-  using Prim = Value (*)(State &, Value, sptr<Env>);
+  using Prim = Value (*)(State &, Value, Env*);
   using CFunc = Value (*)(State &, Value);
 
   enum Type
@@ -52,14 +51,41 @@ namespace vdlisp
   } // namespace detail
 
   struct RcBase {
-    size_t refs{1};
+  protected:
+    RcBase(size_t init = 1) noexcept : refs_{init} {}
+    ~RcBase() = default;
+  private:
+    size_t refs_{1};
+  public:
+    void inc_ref() noexcept { ++refs_; }
+    size_t dec_ref() noexcept { return --refs_; }
+    size_t ref_count() const noexcept { return refs_; }
   };
 
-  class Env
+  class Env : public RcBase
   {
   public:
     std::unordered_map<std::string, Value> map;
-    sptr<Env> parent;
+    Env *parent = nullptr;
+    ~Env();
+  };
+
+  // Helpers to manage Env reference counts (centralized for clarity)
+  inline void retain_env(Env *e) { if (e) e->inc_ref(); }
+  inline void release_env(Env *e) { if (!e) return; if (e->dec_ref() == 0) delete e; }
+
+  // RAII guard that owns a temporary Env* reference and releases it on destruction.
+  struct EnvGuard {
+    explicit EnvGuard(Env *e = nullptr) noexcept : e_{e} {}
+    ~EnvGuard() { if (e_) release_env(e_); }
+    EnvGuard(const EnvGuard&) = delete;
+    EnvGuard& operator=(const EnvGuard&) = delete;
+    EnvGuard(EnvGuard &&o) noexcept : e_(o.e_) { o.e_ = nullptr; }
+    EnvGuard& operator=(EnvGuard &&o) noexcept { if (this != &o) { if (e_) release_env(e_); e_ = o.e_; o.e_ = nullptr; } return *this; }
+    Env* get() const noexcept { return e_; }
+    Env* release() noexcept { Env* t = e_; e_ = nullptr; return t; }
+  private:
+    Env *e_;
   };
 
   class Value
@@ -176,10 +202,10 @@ namespace vdlisp
   // - num_call_count: counter for pure numeric calls
   // - compiled_code: a void* that holds the machine-code pointer returned by
   //                  the JITCompiler after successful compilation (nullptr if not compiled)
-  class FuncData : public RcBase { public: Value params; Value body; sptr<Env> closure_env; size_t call_count = 0; size_t num_call_count = 0; void* compiled_code = nullptr; bool jit_failed = false; };
+  class FuncData : public RcBase { public: Value params; Value body; Env *closure_env = nullptr; size_t call_count = 0; size_t num_call_count = 0; void* compiled_code = nullptr; bool jit_failed = false; };
 
   // MacroData: macros are expanded by the interpreter at compile-time (no JIT)
-  class MacroData : public RcBase { public: Value params; Value body; sptr<Env> closure_env; };
+  class MacroData : public RcBase { public: Value params; Value body; Env *closure_env = nullptr; };
 
 } // namespace vdlisp
 

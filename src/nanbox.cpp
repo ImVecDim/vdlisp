@@ -7,6 +7,13 @@
 
 using namespace vdlisp;
 
+Env::~Env() {
+  if (parent) {
+    release_env(parent);
+    parent = nullptr;
+  }
+}
+
 // JIT compiler instance is provided by `global_jit` declared in the JIT header.
 // The concrete `JITCompiler global_jit` definition lives in `src/jit/jit.cpp`.
 
@@ -229,6 +236,7 @@ auto Value::is_refcounted(Type t) -> bool
     case TSYMBOL:
     case TFUNC:
     case TMACRO:
+    case TENV:
       return true;
     default:
       return false;
@@ -239,14 +247,14 @@ void Value::retain_payload(Type t, void* p)
 {
   if (!p) return;
   auto *rc = static_cast<RcBase*>(p);
-  ++rc->refs;
+  rc->inc_ref();
 }
 
 void Value::release_payload(Type t, void* p)
 {
   if (!p) return;
   auto *rc = static_cast<RcBase*>(p);
-  if (--rc->refs != 0) return;
+  if (rc->dec_ref() != 0) return;
 
   switch (t) {
     case TPAIR:
@@ -264,11 +272,15 @@ void Value::release_payload(Type t, void* p)
         global_jit.releaseFunctionCode(fd->compiled_code);
         fd->compiled_code = nullptr;
       }
+      if (fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
       delete fd;
       break;
     }
     case TMACRO:
       delete static_cast<MacroData*>(p);
+      break;
+    case TENV:
+      delete static_cast<Env*>(p);
       break;
     default:
       break;
