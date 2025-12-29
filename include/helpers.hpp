@@ -22,17 +22,18 @@ void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std
 
 auto value_equal(Value a, Value b) -> bool;
 
-auto type_name(Value v) -> std::string;
+// Small helpers (inlined for performance)
+inline auto type_name(Value v) -> std::string { if (!v) return std::string("nil"); return v->type_name(); }
 
-auto require_number(Value v, const char *who) -> double;
+inline auto require_number(Value v, const char *who) -> double { if (!v || v->get_type() != TNUMBER) throw std::runtime_error(std::string(who) + std::string(": expected number, got ") + std::string(type_name(v))); return v->get_number(); }
 
 // Small helpers to reduce repetitive get_type() checks
-auto pair_car(Value p) -> Value;
-auto pair_cdr(Value p) -> Value;
-auto is_pair(Value p) -> bool;
-auto is_symbol(Value p, const std::string &name) -> bool;
-void pair_set_car(Value p, Value v);
-void pair_set_cdr(Value p, Value v);
+inline auto pair_car(Value p) -> Value { if (!p) return {}; if (p->get_type() != TPAIR) return {}; return p->get_pair()->car; }
+inline auto pair_cdr(Value p) -> Value { if (!p) return {}; if (p->get_type() != TPAIR) return {}; return p->get_pair()->cdr; }
+inline auto is_pair(Value p) -> bool { return p && p->get_type() == TPAIR; }
+inline auto is_symbol(Value p, const std::string &name) -> bool { return p && p->get_type() == TSYMBOL && *p->get_symbol() == name; }
+inline void pair_set_car(Value p, Value v) { if (!p) return; if (p->get_type() != TPAIR) return; p->get_pair()->car = v; }
+inline void pair_set_cdr(Value p, Value v) { if (!p) return; if (p->get_type() != TPAIR) return; p->get_pair()->cdr = v; }
 
 } // namespace vdlisp
 

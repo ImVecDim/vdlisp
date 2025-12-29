@@ -16,7 +16,7 @@ else()
   if(ENABLE_LTO)
     add_compile_options(-O3 -march=native -flto -fdiagnostics-color=always)
   else()
-    add_compile_options(-O2 -fdiagnostics-color=always)
+    add_compile_options(-O3 -fdiagnostics-color=always)
   endif()
 endif()
 

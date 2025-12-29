@@ -62,6 +62,8 @@ namespace vdlisp
     size_t ref_count() const noexcept { return refs_; }
   };
 
+  class StringData : public RcBase { public: explicit StringData(const std::string &s) : value(s) {} std::string value; };
+
   class Env : public RcBase
   {
   public:
@@ -189,9 +191,131 @@ namespace vdlisp
     uint64_t bits;
   };
 
-  class PairData : public RcBase { public: Value car; Value cdr; };
+  // Inline short Value methods for performance
+  inline auto Value::get_number() const -> double {
+    double result;
+    static_assert(sizeof(double) == sizeof(bits), "Double must be 64-bit");
+    std::memcpy(&result, &bits, sizeof(result));
+    return result;
+  }
 
-  class StringData : public RcBase { public: explicit StringData(const std::string &s) : value(s) {} std::string value; };
+  inline void Value::set_number(double value) {
+    release();
+    std::memcpy(&bits, &value, sizeof(bits));
+    if ((bits & kNaNMask) == kNaNMask) {
+      bits = 0;
+    }
+  }
+
+  inline auto Value::get_pair() const -> PairData* {
+    return reinterpret_cast<PairData*>(bits & kPayloadMask);
+  }
+
+  inline void Value::set_pair(PairData* ptr) {
+    release();
+    bits = kTagPair | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
+  }
+
+  inline auto Value::get_string() const -> std::string* {
+    auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
+    return sd ? &sd->value : nullptr;
+  }
+
+  inline void Value::set_string(StringData* ptr) {
+    release();
+    bits = kTagString | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
+  }
+
+  inline auto Value::get_symbol() const -> std::string* {
+    auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
+    return sd ? &sd->value : nullptr;
+  }
+
+  inline void Value::set_symbol(StringData* ptr) {
+    release();
+    bits = kTagSymbol | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
+  }
+
+  inline auto Value::get_func() const -> FuncData* {
+    return reinterpret_cast<FuncData*>(bits & kPayloadMask);
+  }
+
+  inline void Value::set_func(FuncData* ptr) {
+    release();
+    bits = kTagFunc | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
+  }
+
+  inline auto Value::get_macro() const -> MacroData* {
+    return reinterpret_cast<MacroData*>(bits & kPayloadMask);
+  }
+
+  inline void Value::set_macro(MacroData* ptr) {
+    release();
+    bits = kTagMacro | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
+  }
+
+  inline Prim Value::get_prim() const {
+    Prim fn;
+    uint64_t payload = bits & kPayloadMask;
+    std::memcpy(&fn, &payload, sizeof(fn));
+    return fn;
+  }
+
+  inline void Value::set_prim(Prim fn) {
+    release();
+    uint64_t payload = 0;
+    std::memcpy(&payload, &fn, sizeof(fn));
+    bits = kTagPrim | (payload & kPayloadMask);
+  }
+
+  inline CFunc Value::get_cfunc() const {
+    CFunc fn;
+    uint64_t payload = bits & kPayloadMask;
+    std::memcpy(&fn, &payload, sizeof(fn));
+    return fn;
+  }
+
+  inline void Value::set_cfunc(CFunc fn) {
+    release();
+    uint64_t payload = 0;
+    std::memcpy(&payload, &fn, sizeof(fn));
+    bits = kTagCFunc | (payload & kPayloadMask);
+  }
+
+  inline void Value::retain() {
+    Type t = get_type();
+    if (!is_refcounted(t)) return;
+    retain_payload(t, payload_ptr());
+  }
+
+  inline void Value::release() {
+    Type t = get_type();
+    if (!is_refcounted(t)) return;
+    release_payload(t, payload_ptr());
+    bits = kTagNil;
+  }
+
+  inline auto Value::is_refcounted(Type t) -> bool {
+    switch (t) {
+      case TPAIR:
+      case TSTRING:
+      case TSYMBOL:
+      case TFUNC:
+      case TMACRO:
+      case TENV:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  inline void Value::retain_payload(Type t, void* p) {
+    if (!p) return;
+    auto *rc = static_cast<RcBase*>(p);
+    rc->inc_ref();
+  }
+
+  class PairData : public RcBase { public: Value car; Value cdr; };
 
   // Function and macro runtime representations used by the evaluator.
   //

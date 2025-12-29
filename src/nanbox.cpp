@@ -94,61 +94,6 @@ auto Value::operator=(std::nullptr_t) -> Value&
   return *this;
 }
 
-auto Value::get_number() const -> double
-{
-  // Reinterpret bits as double
-  double result;
-  static_assert(sizeof(double) == sizeof(bits), "Double must be 64-bit");
-  std::memcpy(&result, &bits, sizeof(result));
-  return result;
-}
-
-void Value::set_number(double value)
-{
-  release();
-  // Store the double bit pattern directly
-  std::memcpy(&bits, &value, sizeof(bits));
-  // Ensure it doesn't accidentally match our NaN tagging scheme
-  if ((bits & kNaNMask) == kNaNMask) {
-    // If it's a NaN that conflicts with our tagging, replace with 0.0
-    bits = 0;
-  }
-}
-
-auto Value::get_pair() const -> PairData*
-{
-  return reinterpret_cast<PairData*>(bits & kPayloadMask);
-}
-
-void Value::set_pair(PairData* ptr)
-{
-  release();
-  bits = kTagPair | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-}
-
-auto Value::get_string() const -> std::string*
-{
-  auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
-  return sd ? &sd->value : nullptr;
-}
-
-void Value::set_string(StringData* ptr)
-{
-  release();
-  bits = kTagString | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-}
-
-auto Value::get_symbol() const -> std::string*
-{
-  auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
-  return sd ? &sd->value : nullptr;
-}
-
-void Value::set_symbol(StringData* ptr)
-{
-  release();
-  bits = kTagSymbol | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-}
 
 // Retrieve the function data from the Value object and support JIT trigger.
 //
@@ -160,95 +105,30 @@ void Value::set_symbol(StringData* ptr)
 //   `llvm::Function` and calls `JITCompiler::compileFunction`. A real
 //   implementation should generate proper IR that matches the function body
 //   and calling convention.
-auto Value::get_func() const -> FuncData* {
-    auto* func = reinterpret_cast<FuncData*>(bits & kPayloadMask);
-    return func;
-}
 
 // Macro handling is executed by the interpreter at expansion time. Macros are
 // tracked with a call counter (for diagnostics) but are not JIT compiled.
-auto Value::get_macro() const -> MacroData* {
-    return reinterpret_cast<MacroData*>(bits & kPayloadMask);
-}
+// inlined in header (include/nanbox.hpp)
 
-void Value::set_func(FuncData* ptr) {
-  release();
-    bits = kTagFunc | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-}
+// inlined in header (include/nanbox.hpp)
 
-void Value::set_macro(MacroData* ptr) {
-  release();
-    bits = kTagMacro | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-}
+// inlined in header (include/nanbox.hpp)
 
-Prim Value::get_prim() const
-{
-  Prim fn;
-  uint64_t payload = bits & kPayloadMask;
-  std::memcpy(&fn, &payload, sizeof(fn));
-  return fn;
-}
+// inlined in header (include/nanbox.hpp)
 
-void Value::set_prim(Prim fn)
-{
-  release();
-  uint64_t payload = 0;
-  std::memcpy(&payload, &fn, sizeof(fn));
-  bits = kTagPrim | (payload & kPayloadMask);
-}
+// inlined in header (include/nanbox.hpp)
 
-CFunc Value::get_cfunc() const
-{
-  CFunc fn;
-  uint64_t payload = bits & kPayloadMask;
-  std::memcpy(&fn, &payload, sizeof(fn));
-  return fn;
-}
+// inlined in header (include/nanbox.hpp)
 
-void Value::set_cfunc(CFunc fn)
-{
-  release();
-  uint64_t payload = 0;
-  std::memcpy(&payload, &fn, sizeof(fn));
-  bits = kTagCFunc | (payload & kPayloadMask);
-}
+// inlined in header (include/nanbox.hpp)
 
-void Value::retain()
-{
-  Type t = get_type();
-  if (!is_refcounted(t)) return;
-  retain_payload(t, payload_ptr());
-}
+// inlined in header (include/nanbox.hpp)
 
-void Value::release()
-{
-  Type t = get_type();
-  if (!is_refcounted(t)) return;
-  release_payload(t, payload_ptr());
-  bits = kTagNil;
-}
+// inlined in header (include/nanbox.hpp)
 
-auto Value::is_refcounted(Type t) -> bool
-{
-  switch (t) {
-    case TPAIR:
-    case TSTRING:
-    case TSYMBOL:
-    case TFUNC:
-    case TMACRO:
-    case TENV:
-      return true;
-    default:
-      return false;
-  }
-}
+// inlined in header (include/nanbox.hpp)
 
-void Value::retain_payload(Type t, void* p)
-{
-  if (!p) return;
-  auto *rc = static_cast<RcBase*>(p);
-  rc->inc_ref();
-}
+// inlined in header (include/nanbox.hpp)
 
 void Value::release_payload(Type t, void* p)
 {
