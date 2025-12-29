@@ -52,7 +52,7 @@ static void skip_ws_and_comments(const std::string &src, size_t &pos, size_t &li
 
 // parser implementation; kept in src/helpers.cpp via non-member parse_at
 
-static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Ptr
+static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Value
 {
   skip_ws_and_comments(src, pos, line, col);
   if (pos >= src.size())
@@ -68,8 +68,8 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
     size_t open_col = col;
 
     advance_pos(src, pos, line, col);
-    Ptr head = nullptr;
-    Ptr *last = &head;
+    Value head = nullptr;
+    Value *last = &head;
     bool closed = false;
     while (true)
     {
@@ -84,13 +84,13 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
       }
       // Parse next element. If it's the dot symbol "." then treat the
       // following expression as the dotted-tail (cdr) of the list.
-      Ptr e = parse_at(S, src, pos, line, col, name);
+      Value e = parse_at(S, src, pos, line, col, name);
       if (e && e->get_type() == TSYMBOL && *e->get_symbol() == ".") {
         // dotted-tail: parse the tail expression and splice it as the cdr
         skip_ws_and_comments(src, pos, line, col);
         if (pos >= src.size())
           throw ParseError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF after . in list");
-        Ptr tail = parse_at(S, src, pos, line, col, name);
+        Value tail = parse_at(S, src, pos, line, col, name);
         // set the cdr pointer of the last pair (pointed to by `last`) to tail
         *last = tail;
         // after a dotted-tail the list must be closed immediately
@@ -102,7 +102,7 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
         break;
       }
       // Otherwise append the parsed element to the list as before.
-      *last = S.make_pair(e, Ptr());
+      *last = S.make_pair(e, Value());
       PairData *pd = (*last)->get_pair();
       S.set_source_loc(*last, name, open_line, open_col);
       last = &pd->cdr;
@@ -119,8 +119,8 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
     size_t qcol = col;
 
     advance_pos(src, pos, line, col);
-    Ptr quoted = parse_at(S, src, pos, line, col, name);
-    Ptr res = list_of(S, {S.make_symbol("quote"), quoted});
+    Value quoted = parse_at(S, src, pos, line, col, name);
+    Value res = list_of(S, {S.make_symbol("quote"), quoted});
     S.set_source_loc(res, name, qline, qcol);
     return res;
   }
@@ -130,8 +130,8 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
     size_t qcol = col;
 
     advance_pos(src, pos, line, col);
-    Ptr qq = parse_at(S, src, pos, line, col, name);
-    Ptr res = list_of(S, {S.make_symbol("quasiquote"), qq});
+    Value qq = parse_at(S, src, pos, line, col, name);
+    Value res = list_of(S, {S.make_symbol("quasiquote"), qq});
     S.set_source_loc(res, name, qline, qcol);
     return res;
   }
@@ -141,8 +141,8 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
     size_t qcol = col;
 
     advance_pos(src, pos, line, col);
-    Ptr uq = parse_at(S, src, pos, line, col, name);
-    Ptr res = list_of(S, {S.make_symbol("unquote"), uq});
+    Value uq = parse_at(S, src, pos, line, col, name);
+    Value res = list_of(S, {S.make_symbol("unquote"), uq});
     S.set_source_loc(res, name, qline, qcol);
     return res;
   }
@@ -178,7 +178,7 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
     }
     // consume closing quote
     advance_pos(src, pos, line, col);
-    Ptr v = S.make_string(s);
+    Value v = S.make_string(s);
     S.set_source_loc(v, name, sline, scol);
     return v;
   }
@@ -195,19 +195,19 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
     char *endp = nullptr;
     double val = strtod(tok.c_str(), &endp);
     if (endp != tok.c_str() && *endp == '\0') {
-      Ptr v = S.make_number(val);
+      Value v = S.make_number(val);
       S.set_source_loc(v, name, tline, tcol);
       return v;
     }
     if (tok == "nil")
       return {};
-    Ptr v = S.make_symbol(tok);
+    Value v = S.make_symbol(tok);
     S.set_source_loc(v, name, tline, tcol);
     return v;
   }
 }
 
-auto State::parse(const std::string &src, const std::string &name) -> Ptr
+auto State::parse(const std::string &src, const std::string &name) -> Value
 {
   sources[name] = src;
   size_t pos = 0;
@@ -216,38 +216,38 @@ auto State::parse(const std::string &src, const std::string &name) -> Ptr
   return parse_at(*this, src, pos, line, col, name);
 }
 
-auto State::parse_all(const std::string &src, const std::string &name) -> Ptr
+auto State::parse_all(const std::string &src, const std::string &name) -> Value
 {
   sources[name] = src;
   size_t pos = 0;
   size_t line = 1;
   size_t col = 1;
-  Ptr head;
-  Ptr *last = &head;
+  Value head;
+  Value *last = &head;
   while (pos < src.size())
   {
-    Ptr e = parse_at(*this, src, pos, line, col, name);
-    *last = make_pair(e, Ptr());
+    Value e = parse_at(*this, src, pos, line, col, name);
+    *last = make_pair(e, Value());
     PairData *pd = (*last)->get_pair();
     last = &pd->cdr;
   }
   return head;
 }
 
-auto list_of(State &S, std::initializer_list<Ptr> items) -> Ptr
+auto list_of(State &S, std::initializer_list<Value> items) -> Value
 {
-  Ptr head;
-  Ptr *last = &head;
+  Value head;
+  Value *last = &head;
   for (auto &it : items)
   {
-    *last = S.make_pair(it, Ptr());
+    *last = S.make_pair(it, Value());
     PairData *pd = (*last)->get_pair();
     last = &pd->cdr;
   }
   return head;
 }
 
-void State::set_source_loc(Ptr v, const std::string &file, size_t line, size_t col)
+void State::set_source_loc(Value v, const std::string &file, size_t line, size_t col)
 {
   if (!v)
     return;
@@ -255,14 +255,14 @@ void State::set_source_loc(Ptr v, const std::string &file, size_t line, size_t c
   loc.file = file;
   loc.line = line;
   loc.col = col;
-  src_map[v.get()] = loc;
+  src_map[v.identity_key()] = loc;
 }
 
-auto State::get_source_loc(Ptr v, SourceLoc &out) const -> bool
+auto State::get_source_loc(Value v, SourceLoc &out) const -> bool
 {
   if (!v)
     return false;
-  auto it = src_map.find(v.get());
+  auto it = src_map.find(v.identity_key());
   if (it == src_map.end())
     return false;
   out = it->second;
@@ -331,7 +331,7 @@ void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std
 // Move previously-inline helper implementations here
 namespace vdlisp {
 
-auto value_equal(Ptr a, Ptr b) -> bool
+auto value_equal(Value a, Value b) -> bool
 {
   if (a == b) return true;
   if (!a || !b) return false;
@@ -349,13 +349,13 @@ auto value_equal(Ptr a, Ptr b) -> bool
   }
 }
 
-auto type_name(Ptr v) -> std::string
+auto type_name(Value v) -> std::string
 {
   if (!v) return std::string("nil");
   return v->type_name();
 }
 
-auto require_number(Ptr v, const char *who) -> double
+auto require_number(Value v, const char *who) -> double
 {
   if (!v || v->get_type() != TNUMBER)
     throw std::runtime_error(std::string(who) + std::string(": expected number, got ") + std::string(type_name(v)));
@@ -363,34 +363,34 @@ auto require_number(Ptr v, const char *who) -> double
 }
 
 // Small helpers to reduce repetitive type checks and accessors
-auto pair_car(Ptr p) -> Ptr {
+auto pair_car(Value p) -> Value {
   if (!p) return {};
   if (p->get_type() != TPAIR) return {};
   return p->get_pair()->car;
 }
 
-auto pair_cdr(Ptr p) -> Ptr {
+auto pair_cdr(Value p) -> Value {
   if (!p) return {};
   if (p->get_type() != TPAIR) return {};
   return p->get_pair()->cdr;
 }
 
-auto is_pair(Ptr p) -> bool {
+auto is_pair(Value p) -> bool {
   return p && p->get_type() == TPAIR;
 }
 
-auto is_symbol(Ptr p, const std::string &name) -> bool {
+auto is_symbol(Value p, const std::string &name) -> bool {
   return p && p->get_type() == TSYMBOL && *p->get_symbol() == name;
 }
 
 // Setters for pair fields
-void pair_set_car(Ptr p, Ptr v) {
+void pair_set_car(Value p, Value v) {
   if (!p) return;
   if (p->get_type() != TPAIR) return;
   p->get_pair()->car = v;
 }
 
-void pair_set_cdr(Ptr p, Ptr v) {
+void pair_set_cdr(Value p, Value v) {
   if (!p) return;
   if (p->get_type() != TPAIR) return;
   p->get_pair()->cdr = v;

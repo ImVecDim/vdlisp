@@ -29,12 +29,12 @@ auto build_func_ir(vdlisp::FuncData* func, llvm::Module &M, llvm::LLVMContext &c
 
     JITIREmitter emitter(func, F, context);
 
-    vdlisp::Ptr body = func->body;
+    vdlisp::Value body = func->body;
     llvm::Value *lastv = nullptr;
     while (body) {
-        vdlisp::Ptr car = pair_car(body);
+        vdlisp::Value car = pair_car(body);
         if (is_pair(car) && is_symbol(pair_car(car), "cond")) {
-            vdlisp::Ptr clauses = pair_cdr(car);
+            vdlisp::Value clauses = pair_cdr(car);
             llvm::Value *cv = emitter.compileCond(clauses);
             if (!cv) return nullptr;
             lastv = cv;

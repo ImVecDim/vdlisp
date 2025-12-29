@@ -18,12 +18,12 @@ using namespace vdlisp;
 // -------------------- helpers --------------------
 
 template<class It>
-static auto make_string_list_range(State &S, It b, It e) -> Ptr
+static auto make_string_list_range(State &S, It b, It e) -> Value
 {
-  Ptr head;
-  Ptr *last = &head;
+  Value head;
+  Value *last = &head;
   for (; b != e; ++b) {
-    *last = S.make_pair(S.make_string(*b), Ptr());
+    *last = S.make_pair(S.make_string(*b), Value());
     PairData *pd = (*last)->get_pair();
     last = &pd->cdr;
   }
@@ -47,12 +47,12 @@ State::State()
 
 // -------------------- State allocators --------------------
 
-auto State::alloc_string(const std::string &s) -> std::string*
+auto State::alloc_string(const std::string &s) -> StringData*
 {
-  return new std::string(s);
+  return new StringData(s);
 }
 
-auto State::alloc_pair(Ptr car, Ptr cdr) -> PairData*
+auto State::alloc_pair(Value car, Value cdr) -> PairData*
 {
   auto *p = new PairData();
   p->car = car;
@@ -60,7 +60,7 @@ auto State::alloc_pair(Ptr car, Ptr cdr) -> PairData*
   return p;
 }
 
-auto State::alloc_func(Ptr params, Ptr body, sptr<Env> env) -> FuncData*
+auto State::alloc_func(Value params, Value body, sptr<Env> env) -> FuncData*
 {
   FuncData *f = new FuncData();
   f->params = params;
@@ -73,7 +73,7 @@ auto State::alloc_func(Ptr params, Ptr body, sptr<Env> env) -> FuncData*
   return f;
 }
 
-auto State::alloc_macro(Ptr params, Ptr body, sptr<Env> env) -> MacroData*
+auto State::alloc_macro(Value params, Value body, sptr<Env> env) -> MacroData*
 {
   MacroData *m = new MacroData();
   m->params = params;
@@ -83,15 +83,9 @@ auto State::alloc_macro(Ptr params, Ptr body, sptr<Env> env) -> MacroData*
 }
 
 // Value and Env allocators
-auto State::alloc_value(Type t) -> Value*
+auto State::make_pooled_value(Type t) -> Value
 {
-  return new Value(t);
-}
-
-auto State::make_pooled_value(Type t) -> Ptr
-{
-  Value *v = alloc_value(t);
-  return Ptr(v);
+  return Value(t);
 }
 
 auto State::alloc_env() -> Env*
@@ -112,90 +106,136 @@ auto State::make_env(sptr<Env> parent) -> sptr<Env>
 void State::shutdown_and_purge_pools()
 {
   // Release runtime references so reference-counted objects can be reclaimed.
+  // First: break common cycles that refcounting cannot solve (closures <-> envs).
+  // Clear closure envs held by functions/macros in the intern table.
+  for (auto &kv : symbol_intern) {
+    Value &v = kv.second;
+    if (v && v->get_type() == TFUNC) {
+      FuncData *fd = v->get_func();
+      if (fd) fd->closure_env.reset();
+    } else if (v && v->get_type() == TMACRO) {
+      MacroData *md = v->get_macro();
+      if (md) md->closure_env.reset();
+    }
+    // Reset the Value to trigger release of referenced payloads
+    v = Value();
+  }
+
+  // Walk the global environment chain and clear maps / parent pointers
+  if (global) {
+    std::vector<sptr<Env>> q;
+    q.push_back(global);
+    for (size_t i = 0; i < q.size(); ++i) {
+      auto e = q[i];
+      if (!e) continue;
+      // enqueue parent (if any) to ensure we visit the whole chain
+      if (e->parent) q.push_back(e->parent);
+      // clear function closure_envs for values stored in env maps
+      for (auto &mkv : e->map) {
+        Value &val = mkv.second;
+        if (val && val->get_type() == TFUNC) {
+          FuncData *fd = val->get_func();
+          if (fd) fd->closure_env.reset();
+        } else if (val && val->get_type() == TMACRO) {
+          MacroData *md = val->get_macro();
+          if (md) md->closure_env.reset();
+        }
+        val = Value();
+      }
+      e->map.clear();
+      e->parent.reset();
+    }
+  }
+
+  // Clear other runtime caches and containers
   env_stack.clear();
+  global.reset();
+
+  for (auto &kv : loaded_modules) kv.second = Value();
   loaded_modules.clear();
+
   sources.clear();
   src_call_chain_map.clear();
   src_map.clear();
+
   symbol_intern.clear();
-  current_expr.reset();
-  global.reset();
+  current_expr = Value();
 }
 
 // global used by JIT bridge to access the interpreter State when native
 // code needs to fall back to the interpreter.
 vdlisp::State* vdlisp::jit_active_state = nullptr;
 
-auto State::make_nil() -> Ptr { return {}; }
-auto State::make_number(double n) -> Ptr
+auto State::make_nil() -> Value { return {}; }
+auto State::make_number(double n) -> Value
 {
-  Ptr v = make_pooled_value(TNUMBER);
+  Value v = make_pooled_value(TNUMBER);
   v->set_number(n);
   return v;
 }
-auto State::make_string(const std::string &s) -> Ptr
+auto State::make_string(const std::string &s) -> Value
 {
-  Ptr v = make_pooled_value(TSTRING);
+  Value v = make_pooled_value(TSTRING);
   v->set_string(alloc_string(s));
   return v;
 }
-auto State::make_symbol(const std::string &s) -> Ptr
+auto State::make_symbol(const std::string &s) -> Value
 {
   auto it = symbol_intern.find(s);
   if (it != symbol_intern.end())
     return it->second;
-  Ptr v = make_pooled_value(TSYMBOL);
+  Value v = make_pooled_value(TSYMBOL);
   v->set_symbol(alloc_string(s));
   symbol_intern[s] = v;
   return v;
 }
-auto State::make_pair(Ptr car, Ptr cdr) -> Ptr
+auto State::make_pair(Value car, Value cdr) -> Value
 {
-  Ptr v = make_pooled_value(TPAIR);
+  Value v = make_pooled_value(TPAIR);
   v->set_pair(alloc_pair(car, cdr));
   return v;
 }
-auto State::make_cfunc(const CFunc &fn) -> Ptr
+auto State::make_cfunc(const CFunc &fn) -> Value
 {
-  Ptr v = make_pooled_value(TCFUNC);
+  Value v = make_pooled_value(TCFUNC);
   v->set_cfunc(fn);
   return v;
 }
-auto State::make_prim(const Prim &fn) -> Ptr
+auto State::make_prim(const Prim &fn) -> Value
 {
-  Ptr v = make_pooled_value(TPRIM);
+  Value v = make_pooled_value(TPRIM);
   v->set_prim(fn);
   return v;
 }
-auto State::make_function(Ptr params, Ptr body, sptr<Env> env) -> Ptr
+auto State::make_function(Value params, Value body, sptr<Env> env) -> Value
 {
-  Ptr v = make_pooled_value(TFUNC);
+  Value v = make_pooled_value(TFUNC);
   v->set_func(alloc_func(params, body, env));
   return v;
 }
-auto State::make_macro(Ptr params, Ptr body, sptr<Env> env) -> Ptr
+auto State::make_macro(Value params, Value body, sptr<Env> env) -> Value
 {
-  Ptr v = make_pooled_value(TMACRO);
+  Value v = make_pooled_value(TMACRO);
   v->set_macro(alloc_macro(params, body, env));
   return v;
 }
 
-auto State::make_string_list(const std::vector<std::string> &items) -> Ptr
+auto State::make_string_list(const std::vector<std::string> &items) -> Value
 {
   return make_string_list_range(*this, items.begin(), items.end());
 }
 
-auto State::make_string_list(int argc, char **argv, int start) -> Ptr
+auto State::make_string_list(int argc, char **argv, int start) -> Value
 {
   return make_string_list_range(*this, argv + start, argv + argc);
 }
 
-auto State::make_string_list(std::initializer_list<std::string> items) -> Ptr
+auto State::make_string_list(std::initializer_list<std::string> items) -> Value
 {
   return make_string_list_range(*this, items.begin(), items.end());
 }
 
-auto State::make_string_list(std::initializer_list<const char*> items) -> Ptr
+auto State::make_string_list(std::initializer_list<const char*> items) -> Value
 {
   return make_string_list_range(*this, items.begin(), items.end());
 }
@@ -209,7 +249,7 @@ void State::register_prim(const std::string &name, const Prim &fn)
   bind_global(name, make_prim(fn));
 }
 
-auto State::bind(Ptr sym, Ptr v, sptr<Env> env) -> Ptr
+auto State::bind(Value sym, Value v, sptr<Env> env) -> Value
 {
   if (!env)
     env = global;
@@ -219,7 +259,7 @@ auto State::bind(Ptr sym, Ptr v, sptr<Env> env) -> Ptr
   return v;
 }
 
-auto State::set(Ptr sym, Ptr v, sptr<Env> env) -> Ptr
+auto State::set(Value sym, Value v, sptr<Env> env) -> Value
 {
   if (!env)
     env = global;
@@ -240,12 +280,12 @@ auto State::set(Ptr sym, Ptr v, sptr<Env> env) -> Ptr
   return v;
 }
 
-void State::bind_global(const std::string &name, Ptr v)
+void State::bind_global(const std::string &name, Value v)
 {
   global->map[name] = v;
 }
 
-auto State::get_bound(const std::string &name, sptr<Env> env) -> Ptr
+auto State::get_bound(const std::string &name, sptr<Env> env) -> Value
 {
   auto e = env ? env : global;
   while (e)
@@ -268,17 +308,17 @@ auto State::get_bound(const std::string &name, sptr<Env> env) -> Ptr
 // -------------------- eval --------------------
 
 // Evaluate each element of a list and return a new list of evaluated values
-static auto eval_args(State &S, Ptr list, sptr<Env> env) -> Ptr
+static auto eval_args(State &S, Value list, sptr<Env> env) -> Value
 {
-  Ptr head;
-  Ptr *last = &head;
-  Ptr a = list;
+  Value head;
+  Value *last = &head;
+  Value a = list;
   while (a)
   {
-    Ptr acar = pair_car(a);
-    Ptr acdr = pair_cdr(a);
-    Ptr av = S.eval(acar, env);
-    *last = S.make_pair(av, Ptr());
+    Value acar = pair_car(a);
+    Value acdr = pair_cdr(a);
+    Value av = S.eval(acar, env);
+    *last = S.make_pair(av, Value());
     PairData *lpd = (*last)->get_pair();
     last = &lpd->cdr;
     a = acdr;
@@ -287,13 +327,13 @@ static auto eval_args(State &S, Ptr list, sptr<Env> env) -> Ptr
 }
 
 static void bind_params_to_env(
-    std::unordered_map<std::string, Ptr> &out,
-    Ptr params,
-    Ptr args,
+    std::unordered_map<std::string, Value> &out,
+    Value params,
+    Value args,
     bool fill_missing_with_nil)
 {
-  Ptr p = params;
-  Ptr a = args;
+  Value p = params;
+  Value a = args;
   while (p)
   {
     if (p && p->get_type() == TSYMBOL) {
@@ -305,33 +345,33 @@ static void bind_params_to_env(
     if (!fill_missing_with_nil && !a)
       break;
 
-    Ptr pcar = pair_car(p);
-    Ptr pcdr = pair_cdr(p);
+    Value pcar = pair_car(p);
+    Value pcdr = pair_cdr(p);
 
     if (pcar && pcar->get_type() == TSYMBOL)
     {
-      Ptr bound = a ? pair_car(a) : Ptr();
+      Value bound = a ? pair_car(a) : Value();
       out[*pcar->get_symbol()] = bound;
     }
 
     p = pcdr;
-    a = a ? pair_cdr(a) : Ptr();
+    a = a ? pair_cdr(a) : Value();
   }
 }
 
-auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
+auto State::eval(Value expr, sptr<Env> env) -> Value
 {
   // Keep track of current expression. On exception we leave current_expr set to the
   // failing expression so the top-level can report a source location.
   class EvalContext {
   public:
-    EvalContext(State &S, Ptr expr) : S(S), prev(S.current_expr) { S.current_expr = expr; }
+    EvalContext(State &S, Value expr) : S(S), prev(S.current_expr) { S.current_expr = expr; }
     void commit() { commit_flag = true; }
     ~EvalContext() { if (commit_flag) S.current_expr = prev; }
 
   private:
     State &S;
-    Ptr prev;
+    Value prev;
     bool commit_flag = false;
   } ctx(*this, expr);
 
@@ -345,13 +385,13 @@ auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
   {
     // Look up symbol in the environment chain while distinguishing
     // between "bound to nil" and "not bound". `get_bound` returns
-    // a Ptr which may be null for both cases, so perform lookup here
+    // a Value which may be null for both cases, so perform lookup here
     // to detect presence in the map.
     auto e = env ? env : global;
     while (e) {
       auto it = e->map.find(*expr->get_symbol());
       if (it != e->map.end()) {
-        Ptr v = it->second;
+        Value v = it->second;
         ctx.commit();
         return v;
       }
@@ -369,16 +409,16 @@ auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
   {
     // function application or special form
     PairData *pd = expr->get_pair();
-    Ptr car = pd->car;
-    Ptr cdr = pd->cdr;
-    Ptr fn_expr = car;
-    Ptr fn = eval(fn_expr, env);
+    Value car = pd->car;
+    Value cdr = pd->cdr;
+    Value fn_expr = car;
+    Value fn = eval(fn_expr, env);
     if (!fn)
       throw std::runtime_error("attempt to call nil");
     // Special form (prim) receives unevaluated args and env
     if (fn->get_type() == TPRIM)
     {
-      Ptr res = fn->get_prim()(*this, cdr, env);
+      Value res = fn->get_prim()(*this, cdr, env);
       ctx.commit();
       return res;
     }
@@ -387,8 +427,8 @@ auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
     {
       // bind params to raw args
       MacroData *md = fn->get_macro();
-      Ptr params = md->params;
-      Ptr body = md->body;
+      Value params = md->params;
+      Value body = md->body;
       sptr<Env> closure_env = md->closure_env;
       auto e = make_env(closure_env);
       bind_params_to_env(e->map, params, cdr, /*fill_missing_with_nil=*/true);
@@ -411,10 +451,10 @@ auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
           call_chain_entry.push_back(def_loc);
         }
         // record a transient mapping for the call expression itself
-        src_call_chain_map[expr.get()] = call_chain_entry;
+        src_call_chain_map[expr.identity_key()] = call_chain_entry;
       }
 
-      Ptr res;
+      Value res;
       try {
         res = do_list(body, e);
       }
@@ -432,16 +472,16 @@ auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
       // annotate expanded nodes: set source loc to call site and attach
       // the call-chain (prepending to any existing chain from inner macros)
       if (res && have_call_loc) {
-        std::function<void(Ptr)> propagate;
-        propagate = [&](Ptr v) -> void {
+        std::function<void(Value)> propagate;
+        propagate = [&](Value v) -> void {
           if (!v) return;
           set_source_loc(v, call_loc.file, call_loc.line, call_loc.col);
-          auto it = src_call_chain_map.find(v.get());
+          auto it = src_call_chain_map.find(v.identity_key());
           std::vector<State::SourceLoc> new_chain = call_chain_entry;
           if (it != src_call_chain_map.end()) {
             new_chain.insert(new_chain.end(), it->second.begin(), it->second.end());
           }
-          src_call_chain_map[v.get()] = new_chain;
+          src_call_chain_map[v.identity_key()] = new_chain;
           if (is_pair(v)) {
             propagate(pair_car(v));
             propagate(pair_cdr(v));
@@ -454,8 +494,8 @@ auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
       return eval(res, env);
     }
     // otherwise evaluate args (for C functions and user functions)
-    Ptr args = eval_args(*this, cdr, env);
-    Ptr res = call(fn, args, env);
+    Value args = eval_args(*this, cdr, env);
+    Value res = call(fn, args, env);
     ctx.commit();
     return res;
   }
@@ -465,7 +505,7 @@ auto State::eval(Ptr expr, sptr<Env> env) -> Ptr
   }
 }
 
-auto State::call(Ptr fn, Ptr args, sptr<Env> env) -> Ptr
+auto State::call(Value fn, Value args, sptr<Env> env) -> Value
 {
   (void)env;
   if (!fn)
@@ -482,10 +522,10 @@ auto State::call(Ptr fn, Ptr args, sptr<Env> env) -> Ptr
 
     // Check if arguments are all numeric
     std::vector<double> darr;
-    Ptr a = args;
+    Value a = args;
     bool numeric = true;
     while (a) {
-      Ptr av = pair_car(a);
+      Value av = pair_car(a);
       if (!av || av->get_type() != TNUMBER) { numeric = false; break; }
       darr.push_back(av->get_number());
       a = pair_cdr(a);
@@ -526,8 +566,8 @@ auto State::call(Ptr fn, Ptr args, sptr<Env> env) -> Ptr
             // fallback to interpreter implementation for correctness.
             fd->compiled_code = nullptr;
             fd->jit_failed = true;
-            Ptr params = fd->params;
-            Ptr body = fd->body;
+            Value params = fd->params;
+            Value body = fd->body;
             sptr<Env> closure_env = fd->closure_env;
             auto e = make_env(closure_env ? closure_env : global);
             bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
@@ -537,8 +577,8 @@ auto State::call(Ptr fn, Ptr args, sptr<Env> env) -> Ptr
     }
 
     // create new env (fallback interpreter path)
-    Ptr params = fd->params;
-    Ptr body = fd->body;
+    Value params = fd->params;
+    Value body = fd->body;
     sptr<Env> closure_env = fd->closure_env;
     auto e = make_env(closure_env ? closure_env : global);
     // bind params (for functions, missing args stop binding as before)
@@ -570,21 +610,21 @@ auto State::call(Ptr fn, Ptr args, sptr<Env> env) -> Ptr
   throw std::runtime_error("not a function");
 }
 
-auto State::do_list(Ptr body, sptr<Env> env) -> Ptr
+auto State::do_list(Value body, sptr<Env> env) -> Value
 {
-  Ptr res;
+  Value res;
   while (body)
   {
     PairData *pd = body->get_pair();
-    Ptr car = pd->car;
-    Ptr cdr = pd->cdr;
+    Value car = pd->car;
+    Value cdr = pd->cdr;
     res = eval(car, env);
     body = cdr;
   }
   return res;
 }
 
-auto State::to_string(Ptr v) -> std::string
+auto State::to_string(Value v) -> std::string
 {
   if (!v) return "nil";
   return v->to_repr(*this);
@@ -631,7 +671,7 @@ static void report_exception(State &S, const std::exception &ex)
   {
     print_error_with_loc(S, loc, ex.what());
     // see if the evaluated node has an associated call-chain from prior macro expansion
-    auto it = S.src_call_chain_map.find(S.current_expr.get());
+    auto it = S.src_call_chain_map.find(S.current_expr.identity_key());
     if (it != S.src_call_chain_map.end()) {
       print_call_chain(S, it->second);
     }
@@ -662,10 +702,10 @@ static void repl(State &S)
     add_history(line.c_str());
     try
     {
-      Ptr e = S.parse(line);
+      Value e = S.parse(line);
       if (!e)
         continue;
-      Ptr r = S.eval(e, S.global);
+      Value r = S.eval(e, S.global);
       std::cout << S.to_string(r) << "\n";
     }
     catch (const std::exception &ex)
@@ -715,7 +755,7 @@ auto main(int argc, char **argv) -> int
       if (lf) {
         std::ostringstream lss;
         lss << lf.rdbuf();
-        Ptr le = S.parse_all(lss.str(), langfile.string());
+        Value le = S.parse_all(lss.str(), langfile.string());
         if (le) S.do_list(le, S.global);
       }
     }
@@ -738,10 +778,10 @@ auto main(int argc, char **argv) -> int
     }
     std::ostringstream ss;
     ss << f.rdbuf();
-    Ptr e = S.parse_all(ss.str(), argv[1]);
+    Value e = S.parse_all(ss.str(), argv[1]);
     if (e)
     {
-      Ptr r = S.do_list(e, S.global);
+      Value r = S.do_list(e, S.global);
       std::cout << S.to_string(r) << "\n";
     }
   }

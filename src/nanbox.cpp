@@ -48,37 +48,43 @@ Value::Value(Type t)
   }
 }
 
+Value::Value(const Value &other) : bits(other.bits)
+{
+  retain();
+}
+
+Value::Value(Value &&other) noexcept : bits(other.bits)
+{
+  other.bits = kTagNil;
+}
+
 Value::~Value() {
-  // Values own their NaN-boxed payload objects.
-  switch (get_type()) {
-    case TPAIR: {
-      delete get_pair();
-      break;
-    }
-    case TSTRING: {
-      delete get_string();
-      break;
-    }
-    case TSYMBOL: {
-      delete get_symbol();
-      break;
-    }
-    case TFUNC: {
-      FuncData* fd = get_func();
-      if (fd && fd->compiled_code) {
-        global_jit.releaseFunctionCode(fd->compiled_code);
-        fd->compiled_code = nullptr;
-      }
-      delete fd;
-      break;
-    }
-    case TMACRO: {
-      delete get_macro();
-      break;
-    }
-    default:
-      break;
-  }
+  release();
+}
+
+auto Value::operator=(const Value &other) -> Value&
+{
+  if (this == &other) return *this;
+  release();
+  bits = other.bits;
+  retain();
+  return *this;
+}
+
+auto Value::operator=(Value &&other) noexcept -> Value&
+{
+  if (this == &other) return *this;
+  release();
+  bits = other.bits;
+  other.bits = kTagNil;
+  return *this;
+}
+
+auto Value::operator=(std::nullptr_t) -> Value&
+{
+  release();
+  bits = kTagNil;
+  return *this;
 }
 
 auto Value::get_number() const -> double
@@ -92,6 +98,7 @@ auto Value::get_number() const -> double
 
 void Value::set_number(double value)
 {
+  release();
   // Store the double bit pattern directly
   std::memcpy(&bits, &value, sizeof(bits));
   // Ensure it doesn't accidentally match our NaN tagging scheme
@@ -108,26 +115,31 @@ auto Value::get_pair() const -> PairData*
 
 void Value::set_pair(PairData* ptr)
 {
+  release();
   bits = kTagPair | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
 }
 
 auto Value::get_string() const -> std::string*
 {
-  return reinterpret_cast<std::string*>(bits & kPayloadMask);
+  auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
+  return sd ? &sd->value : nullptr;
 }
 
-void Value::set_string(std::string* ptr)
+void Value::set_string(StringData* ptr)
 {
+  release();
   bits = kTagString | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
 }
 
 auto Value::get_symbol() const -> std::string*
 {
-  return reinterpret_cast<std::string*>(bits & kPayloadMask);
+  auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
+  return sd ? &sd->value : nullptr;
 }
 
-void Value::set_symbol(std::string* ptr)
+void Value::set_symbol(StringData* ptr)
 {
+  release();
   bits = kTagSymbol | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
 }
 
@@ -153,10 +165,12 @@ auto Value::get_macro() const -> MacroData* {
 }
 
 void Value::set_func(FuncData* ptr) {
+  release();
     bits = kTagFunc | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
 }
 
 void Value::set_macro(MacroData* ptr) {
+  release();
     bits = kTagMacro | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
 }
 
@@ -170,6 +184,7 @@ Prim Value::get_prim() const
 
 void Value::set_prim(Prim fn)
 {
+  release();
   uint64_t payload = 0;
   std::memcpy(&payload, &fn, sizeof(fn));
   bits = kTagPrim | (payload & kPayloadMask);
@@ -185,9 +200,79 @@ CFunc Value::get_cfunc() const
 
 void Value::set_cfunc(CFunc fn)
 {
+  release();
   uint64_t payload = 0;
   std::memcpy(&payload, &fn, sizeof(fn));
   bits = kTagCFunc | (payload & kPayloadMask);
+}
+
+void Value::retain()
+{
+  Type t = get_type();
+  if (!is_refcounted(t)) return;
+  retain_payload(t, payload_ptr());
+}
+
+void Value::release()
+{
+  Type t = get_type();
+  if (!is_refcounted(t)) return;
+  release_payload(t, payload_ptr());
+  bits = kTagNil;
+}
+
+auto Value::is_refcounted(Type t) -> bool
+{
+  switch (t) {
+    case TPAIR:
+    case TSTRING:
+    case TSYMBOL:
+    case TFUNC:
+    case TMACRO:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void Value::retain_payload(Type t, void* p)
+{
+  if (!p) return;
+  auto *rc = static_cast<RcBase*>(p);
+  ++rc->refs;
+}
+
+void Value::release_payload(Type t, void* p)
+{
+  if (!p) return;
+  auto *rc = static_cast<RcBase*>(p);
+  if (--rc->refs != 0) return;
+
+  switch (t) {
+    case TPAIR:
+      delete static_cast<PairData*>(p);
+      break;
+    case TSTRING:
+      delete static_cast<StringData*>(p);
+      break;
+    case TSYMBOL:
+      delete static_cast<StringData*>(p);
+      break;
+    case TFUNC: {
+      auto *fd = static_cast<FuncData*>(p);
+      if (fd->compiled_code) {
+        global_jit.releaseFunctionCode(fd->compiled_code);
+        fd->compiled_code = nullptr;
+      }
+      delete fd;
+      break;
+    }
+    case TMACRO:
+      delete static_cast<MacroData*>(p);
+      break;
+    default:
+      break;
+  }
 }
 
 // High-level helpers centralized on Value
@@ -230,7 +315,7 @@ auto Value::to_repr(State &S) const -> std::string
       PairData *pd = get_pair();
       if (pd) {
         s += pd->car ? pd->car->to_repr(S) : std::string("nil");
-        Ptr cur = pd->cdr;
+        Value cur = pd->cdr;
         while (cur && cur->get_type() == TPAIR) {
           s += " ";
           PairData *cpd = cur->get_pair();

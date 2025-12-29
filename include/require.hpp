@@ -12,7 +12,7 @@ namespace vdlisp {
 inline void register_require(State &S) {
   // require: load a file and return its value; cache results using canonical paths and provide
   // better diagnostic info on failure
-  S.register_builtin("require", [](State &S, Ptr args) -> Ptr {
+  S.register_builtin("require", [](State &S, Value args) -> Value {
     if (!args || !pair_car(args) || pair_car(args)->get_type() != TSTRING)
       throw std::runtime_error("require requires a string");
     std::string name = *pair_car(args)->get_string();
@@ -56,10 +56,10 @@ inline void register_require(State &S) {
         continue;
       }
       // mark as loading to guard against cycles
-      S.loaded_modules[key] = Ptr();
+      S.loaded_modules[key] = Value();
       std::ostringstream ss; ss << f.rdbuf();
-      Ptr e = S.parse_all(ss.str(), key);
-      Ptr r;
+      Value e = S.parse_all(ss.str(), key);
+      Value r;
       if (e) r = S.do_list(e, S.global);
       S.loaded_modules[key] = r;
       return r;

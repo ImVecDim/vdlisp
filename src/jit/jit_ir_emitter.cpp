@@ -13,7 +13,7 @@ using namespace llvm;
 JITIREmitter::JITIREmitter(vdlisp::FuncData* func_, llvm::Function* F_, llvm::LLVMContext &context_)
   : func(func_), F(F_), context(context_), ir(&F_->getEntryBlock())
 {
-    Ptr p = func->params;
+    vdlisp::Value p = func->params;
     int idx = 0;
     while (p) {
         if (p->get_type() == TSYMBOL) {
@@ -21,7 +21,7 @@ JITIREmitter::JITIREmitter(vdlisp::FuncData* func_, llvm::Function* F_, llvm::LL
             break;
         }
         PairData *ppd = p->get_pair();
-        Ptr pname = ppd->car;
+        vdlisp::Value pname = ppd->car;
         if (pname && pname->get_type() == TSYMBOL) {
             param_index[*pname->get_symbol()] = idx++;
         }
@@ -39,17 +39,17 @@ auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst*
     return a;
 }
 
-auto JITIREmitter::compileCond(vdlisp::Ptr clauses) -> llvm::Value*
+auto JITIREmitter::compileCond(vdlisp::Value clauses) -> llvm::Value*
 {
     if (!clauses) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     std::vector<BasicBlock*> testBBs;
     std::vector<BasicBlock*> bodyBBs;
-    std::vector<vdlisp::Ptr> bodies;
+    std::vector<vdlisp::Value> bodies;
     int idx = 0;
-    vdlisp::Ptr walk = clauses;
+    vdlisp::Value walk = clauses;
     while (walk) {
-            vdlisp::Ptr clause = pair_car(walk);
-        vdlisp::Ptr body = clause ? clause->get_pair()->cdr : vdlisp::Ptr();
+            vdlisp::Value clause = pair_car(walk);
+        vdlisp::Value body = clause ? clause->get_pair()->cdr : vdlisp::Value();
         testBBs.push_back(BasicBlock::Create(context, "cond_test" + std::to_string(idx), F));
         bodyBBs.push_back(BasicBlock::Create(context, "cond_body" + std::to_string(idx), F));
         bodies.push_back(body);
@@ -62,10 +62,10 @@ auto JITIREmitter::compileCond(vdlisp::Ptr clauses) -> llvm::Value*
 
     for (size_t i = 0; i < testBBs.size(); ++i) {
         ir.SetInsertPoint(testBBs[i]);
-        vdlisp::Ptr w = clauses;
+        vdlisp::Value w = clauses;
         for (size_t k = 0; k < i; ++k) w = w->get_pair()->cdr;
-        vdlisp::Ptr clause_i = pair_car(w);
-        vdlisp::Ptr test = clause_i ? pair_car(clause_i) : vdlisp::Ptr();
+        vdlisp::Value clause_i = pair_car(w);
+        vdlisp::Value test = clause_i ? pair_car(clause_i) : vdlisp::Value();
         llvm::Value *condv = emitExpr(test);
         if (!condv) return nullptr;
         llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
@@ -77,10 +77,10 @@ auto JITIREmitter::compileCond(vdlisp::Ptr clauses) -> llvm::Value*
     std::vector<llvm::Value*> vals;
     for (size_t i = 0; i < bodyBBs.size(); ++i) {
         ir.SetInsertPoint(bodyBBs[i]);
-        vdlisp::Ptr b = bodies[i];
+        vdlisp::Value b = bodies[i];
         llvm::Value *last = nullptr;
         while (b) {
-            vdlisp::Ptr ex = pair_car(b);
+            vdlisp::Value ex = pair_car(b);
             llvm::Value *v = emitExpr(ex);
             if (!v) return nullptr;
             last = v;
@@ -104,10 +104,10 @@ auto JITIREmitter::compileCond(vdlisp::Ptr clauses) -> llvm::Value*
     }
     return phi;
 }
-auto JITIREmitter::compileWhile(vdlisp::Ptr rest) -> llvm::Value*
+auto JITIREmitter::compileWhile(vdlisp::Value rest) -> llvm::Value*
 {
-    vdlisp::Ptr cond = pair_car(rest);
-    vdlisp::Ptr body = rest->get_pair()->cdr;
+    vdlisp::Value cond = pair_car(rest);
+    vdlisp::Value body = rest->get_pair()->cdr;
     llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
 
     llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(context, "loop", F);
@@ -123,9 +123,9 @@ auto JITIREmitter::compileWhile(vdlisp::Ptr rest) -> llvm::Value*
 
     ir.SetInsertPoint(bodyBB);
     llvm::Value *last = nullptr;
-    vdlisp::Ptr bb = body;
+    vdlisp::Value bb = body;
     while (bb) {
-        vdlisp::Ptr ex = pair_car(bb);
+        vdlisp::Value ex = pair_car(bb);
         llvm::Value *v = emitExpr(ex);
         if (!v) return nullptr;
         last = v;
@@ -138,16 +138,16 @@ auto JITIREmitter::compileWhile(vdlisp::Ptr rest) -> llvm::Value*
     return last;
 }
 
-auto JITIREmitter::compileLet(vdlisp::Ptr rest) -> llvm::Value*
+auto JITIREmitter::compileLet(vdlisp::Value rest) -> llvm::Value*
 {
-    vdlisp::Ptr bindings = pair_car(rest);
-    vdlisp::Ptr letbody = rest->get_pair()->cdr;
-    vdlisp::Ptr b = bindings;
+    vdlisp::Value bindings = pair_car(rest);
+    vdlisp::Value letbody = rest->get_pair()->cdr;
+    vdlisp::Value b = bindings;
     if (is_pair(b) && is_pair(pair_car(b))) {
         while (b) {
-            vdlisp::Ptr pair = pair_car(b);
-            vdlisp::Ptr name = pair_car(pair);
-            vdlisp::Ptr val = pair_car(pair_cdr(pair));
+            vdlisp::Value pair = pair_car(b);
+            vdlisp::Value name = pair_car(pair);
+            vdlisp::Value val = pair_car(pair_cdr(pair));
             if (!name || name->get_type() != vdlisp::TSYMBOL) return nullptr;
             llvm::Value *v = emitExpr(val);
             if (!v) return nullptr;
@@ -157,11 +157,11 @@ auto JITIREmitter::compileLet(vdlisp::Ptr rest) -> llvm::Value*
         }
     } else {
         while (b) {
-            vdlisp::Ptr name = pair_car(b);
+            vdlisp::Value name = pair_car(b);
             if (!name || name->get_type() != vdlisp::TSYMBOL) return nullptr;
-            vdlisp::Ptr next = pair_cdr(b);
+            vdlisp::Value next = pair_cdr(b);
             if (!next) return nullptr;
-            vdlisp::Ptr val = pair_car(next);
+            vdlisp::Value val = pair_car(next);
             llvm::Value *v = emitExpr(val);
             if (!v) return nullptr;
             llvm::AllocaInst *a = ensure_local(*name->get_symbol());
@@ -170,9 +170,9 @@ auto JITIREmitter::compileLet(vdlisp::Ptr rest) -> llvm::Value*
         }
     }
     llvm::Value *last = nullptr;
-    vdlisp::Ptr bb = letbody;
+    vdlisp::Value bb = letbody;
     while (bb) {
-        vdlisp::Ptr ex = pair_car(bb);
+        vdlisp::Value ex = pair_car(bb);
         llvm::Value *v = emitExpr(ex);
         if (!v) return nullptr;
         last = v;
@@ -181,7 +181,7 @@ auto JITIREmitter::compileLet(vdlisp::Ptr rest) -> llvm::Value*
     if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     return last;
 }
-auto JITIREmitter::emitExpr(vdlisp::Ptr expr) -> llvm::Value*
+auto JITIREmitter::emitExpr(vdlisp::Value expr) -> llvm::Value*
 {
     if (!expr) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     if (expr->get_type() == vdlisp::TNUMBER) {
@@ -204,8 +204,8 @@ auto JITIREmitter::emitExpr(vdlisp::Ptr expr) -> llvm::Value*
     }
     if (expr->get_type() == vdlisp::TPAIR) {
         vdlisp::PairData *pd = expr->get_pair();
-        vdlisp::Ptr op = pd->car;
-        vdlisp::Ptr rest = pd->cdr;
+        vdlisp::Value op = pd->car;
+        vdlisp::Value rest = pd->cdr;
         if (!op || op->get_type() != vdlisp::TSYMBOL) return nullptr;
         std::string opname = *op->get_symbol();
 
@@ -214,9 +214,9 @@ auto JITIREmitter::emitExpr(vdlisp::Ptr expr) -> llvm::Value*
         if (opname == "let") return compileLet(rest);
 
         std::vector<llvm::Value*> vals;
-        vdlisp::Ptr a = rest;
+        vdlisp::Value a = rest;
         while (a) {
-                vdlisp::Ptr av = pair_car(a);
+                vdlisp::Value av = pair_car(a);
             llvm::Value *v = emitExpr(av);
             if (!v) return nullptr;
             vals.push_back(v);
@@ -251,7 +251,7 @@ auto JITIREmitter::emitExpr(vdlisp::Ptr expr) -> llvm::Value*
         if (op && op->get_type() == vdlisp::TSYMBOL) {
             const std::string *nm_ptr = op->get_symbol();
             auto e = func->closure_env;
-            vdlisp::Ptr found;
+            vdlisp::Value found;
             while (e) {
                 auto it = e->map.find(*nm_ptr);
                 if (it != e->map.end()) { found = it->second; break; }

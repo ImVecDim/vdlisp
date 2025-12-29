@@ -31,7 +31,7 @@
 
 `shutdown_and_purge_pools()` 的目标是：
 
-- 先释放解释器侧的全局引用（模块缓存、符号表等），让 `Ptr`/`Value` 的析构能安全发生
+- 先释放解释器侧的全局引用（模块缓存、符号表等），让 `Value`/`Value` 的析构能安全发生
 - 再对各个 pool 执行 best-effort 的 `purge_memory()`，并销毁/重置 pool，以尽量把内存归还给系统
 
 提示：如果你在跑泄漏检测，可以使用基于 Debug 的构建并启用 AddressSanitizer：

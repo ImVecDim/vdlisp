@@ -5,7 +5,6 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
-
 #include "sptr.hpp"
 
 
@@ -13,14 +12,18 @@ namespace vdlisp
 {
 
   class Value;
-  using Ptr = sptr<Value>;
+  class PairData;
+  class StringData;
+  class FuncData;
+  class MacroData;
   class State;
   class Env;
+  //using Value = Value;
 
   // Use plain function pointer types for primitives and C functions to avoid
   // the overhead of std::function (allocations / type-erasure / indirect calls).
-  using Prim = Ptr (*)(State &, Ptr, sptr<Env>);
-  using CFunc = Ptr (*)(State &, Ptr);
+  using Prim = Value (*)(State &, Value, sptr<Env>);
+  using CFunc = Value (*)(State &, Value);
 
   enum Type
   {
@@ -51,26 +54,14 @@ namespace vdlisp
     }
   } // namespace detail
 
-  class PairData { public: Ptr car; Ptr cdr; };
-
-  // Function and macro runtime representations used by the evaluator.
-  //
-  // FuncData fields:
-  // - params, body: AST nodes pointing to parameter list and function body
-  // - closure_env: captured lexical environment
-  // - call_count: a simple call counter used to decide when to JIT compile
-  // - num_call_count: counter for pure numeric calls
-  // - compiled_code: a void* that holds the machine-code pointer returned by
-  //                  the JITCompiler after successful compilation (nullptr if not compiled)
-  class FuncData { public: Ptr params; Ptr body; sptr<Env> closure_env; size_t call_count = 0; size_t num_call_count = 0; void* compiled_code = nullptr; bool jit_failed = false; };
-
-  // MacroData: macros are expanded by the interpreter at compile-time (no JIT)
-  class MacroData { public: Ptr params; Ptr body; sptr<Env> closure_env; };
+  struct RcBase {
+    size_t refs{1};
+  };
 
   class Env
   {
   public:
-    std::unordered_map<std::string, Ptr> map;
+    std::unordered_map<std::string, Value> map;
     sptr<Env> parent;
   };
 
@@ -95,7 +86,14 @@ namespace vdlisp
 
     Value() : bits(kTagNil) {}
     explicit Value(Type t);
+    Value(std::nullptr_t) : bits(kTagNil) {}
+    Value(const Value &other);
+    Value(Value &&other) noexcept;
     ~Value();
+
+    auto operator=(const Value &other) -> Value&;
+    auto operator=(Value &&other) noexcept -> Value&;
+    auto operator=(std::nullptr_t) -> Value&;
 
     // Getters
 
@@ -129,6 +127,18 @@ namespace vdlisp
     [[nodiscard]] Prim get_prim() const;
     [[nodiscard]] CFunc get_cfunc() const;
 
+    [[nodiscard]] inline auto operator->() -> Value* { return this; }
+    [[nodiscard]] inline auto operator->() const -> const Value* { return this; }
+    [[nodiscard]] inline auto get() -> Value* { return this; }
+    [[nodiscard]] inline auto get() const -> const Value* { return this; }
+    [[nodiscard]] explicit operator bool() const { return get_type() != TNIL; }
+    [[nodiscard]] auto operator==(std::nullptr_t) const -> bool { return get_type() == TNIL; }
+    [[nodiscard]] auto operator!=(std::nullptr_t) const -> bool { return get_type() != TNIL; }
+    [[nodiscard]] auto operator==(const Value &rhs) const -> bool { return bits == rhs.bits; }
+    [[nodiscard]] auto operator!=(const Value &rhs) const -> bool { return bits != rhs.bits; }
+    [[nodiscard]] auto identity_key() const -> uint64_t { return bits; }
+    void reset() { *this = Value(); }
+
     // High-level helpers
     [[nodiscard]] auto type_name() const -> std::string;
     auto to_repr(State &S) const -> std::string;
@@ -136,18 +146,43 @@ namespace vdlisp
     // Setters
     void set_number(double value);
     void set_pair(PairData* ptr);
-    void set_string(std::string* ptr);
-    void set_symbol(std::string* ptr);
+    void set_string(StringData* ptr);
+    void set_symbol(StringData* ptr);
     void set_func(FuncData* ptr);
     void set_macro(MacroData* ptr);
     void set_prim(Prim fn);
     void set_cfunc(CFunc fn);
 
   private:
+    void retain();
+    void release();
+    [[nodiscard]] auto payload_ptr() const -> void* { return reinterpret_cast<void*>(bits & kPayloadMask); }
+    static void retain_payload(Type t, void* p);
+    static void release_payload(Type t, void* p);
+    static auto is_refcounted(Type t) -> bool;
+
     // Use NaN-boxing to store all value types in a single 64-bit integer
     // Runtime assumptions are documented in the .cpp implementation.
     uint64_t bits;
   };
+
+  class PairData : public RcBase { public: Value car; Value cdr; };
+
+  class StringData : public RcBase { public: explicit StringData(const std::string &s) : value(s) {} std::string value; };
+
+  // Function and macro runtime representations used by the evaluator.
+  //
+  // FuncData fields:
+  // - params, body: AST nodes pointing to parameter list and function body
+  // - closure_env: captured lexical environment
+  // - call_count: a simple call counter used to decide when to JIT compile
+  // - num_call_count: counter for pure numeric calls
+  // - compiled_code: a void* that holds the machine-code pointer returned by
+  //                  the JITCompiler after successful compilation (nullptr if not compiled)
+  class FuncData : public RcBase { public: Value params; Value body; sptr<Env> closure_env; size_t call_count = 0; size_t num_call_count = 0; void* compiled_code = nullptr; bool jit_failed = false; };
+
+  // MacroData: macros are expanded by the interpreter at compile-time (no JIT)
+  class MacroData : public RcBase { public: Value params; Value body; sptr<Env> closure_env; };
 
 } // namespace vdlisp
 
