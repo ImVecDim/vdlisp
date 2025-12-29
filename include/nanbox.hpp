@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <bit>
 #include <string>
 #include <unordered_map>
 #include "sptr.hpp"
@@ -42,15 +43,11 @@ namespace vdlisp
   // Forward declarations needed for the implementation
   namespace detail {
     inline auto double_to_bits(double value) -> uint64_t {
-      uint64_t bits;
-      memcpy(&bits, &value, sizeof(double));
-      return bits;
+      return std::bit_cast<uint64_t>(value);
     }
 
     inline auto bits_to_double(uint64_t bits) -> double {
-      double value;
-      memcpy(&value, &bits, sizeof(double));
-      return value;
+      return std::bit_cast<double>(bits);
     }
   } // namespace detail
 

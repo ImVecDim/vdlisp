@@ -2,6 +2,7 @@
 /build/
 /build_asan/
 */build/
+/build_debug/
 /tmp/
 
 # Executables

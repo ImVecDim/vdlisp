@@ -1,16 +1,23 @@
 cmake_minimum_required(VERSION 3.15)
 project(vdlisp LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ENABLE_LTO "Enable LTO and agressive optimizations (disable for faster dev builds)" ON)
 
-if(ENABLE_LTO)
-  add_compile_options(-O3 -march=native -flto -fdiagnostics-color=always)
+# Choose compilation flags based on build type and LTO option.
+# - Debug: no optimizations, include debug info and frame pointers for easier debugging/profiling
+# - Release: enable optimizations; if ENABLE_LTO is set, apply aggressive LTO flags
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  add_compile_options(-O0 -g -fno-omit-frame-pointer -fdiagnostics-color=always)
 else()
-  add_compile_options(-O2 -g -fdiagnostics-color=always)
+  if(ENABLE_LTO)
+    add_compile_options(-O3 -march=native -flto -fdiagnostics-color=always)
+  else()
+    add_compile_options(-O2 -fdiagnostics-color=always)
+  endif()
 endif()
 
 add_compile_definitions(_GNU_SOURCE EXPERIMENTAL_KEY_INSTRUCTIONS __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS __STDC_LIMIT_MACROS)
@@ -58,6 +65,8 @@ file(GLOB VDL_SOURCES
 )
 
 add_executable(vdlisp ${VDL_SOURCES})
+# Force C++20 even if external flags add a different -std=...
+target_compile_options(vdlisp PRIVATE -std=c++20)
 
 if(USE_LLVM)
   if(DEFINED LLVM_LIBS_LIST)

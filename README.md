@@ -1,4 +1,4 @@
-# vd：一个带 LLVM JIT 的迷你 Lisp（C++17）
+# vd：一个带 LLVM JIT 的迷你 Lisp（C++20）
 
 本项目实现了一个小型 Lisp 解释器，并在“纯数值调用”的热路径上集成了基于 LLVM MCJIT 的即时编译（JIT）。同时提供交互式 REPL（readline 历史记录）、脚本执行、`require` 模块加载，以及带文件/行/列与调用链（宏展开/函数调用）的错误定位。
 
@@ -13,7 +13,9 @@
 
 ## 依赖
 
-- C++17 编译器（默认 `clang++`）
+- C++20 编译器（默认 `clang++`）
+
+> 注意：项目在 CMake 中已设置为使用 C++20，并在 target 级别强制 `-std=c++20` 以覆盖 `llvm-config` 可能添加的旧 `-std=` 标志。
 - LLVM（需要 `llvm-config`，并链接 `core`、`native` 等库）
 - GNU readline（用于 REPL 的行编辑与历史记录）
 - Boost（使用 `boost::object_pool` 作为运行时对象内存池）
