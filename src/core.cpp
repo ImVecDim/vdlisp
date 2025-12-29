@@ -120,9 +120,9 @@ void register_core(State &S)
     return S.make_symbol(type_name(v));
   });
   S.register_builtin("parse", [](State &S, Value args) -> Value {
-    if (!args || !pair_car(args) || pair_car(args)->get_type() != TSTRING)
+    if (!args || !pair_car(args) || pair_car(args).get_type() != TSTRING)
       throw std::runtime_error("parse requires a string");
-    return S.parse(*pair_car(args)->get_string());
+    return S.parse(*pair_car(args).get_string());
   });
   S.register_builtin("error", [](State &S, Value args) -> Value {
     std::string msg = pair_car(args) ? S.to_string(pair_car(args)) : std::string("error");
@@ -139,7 +139,7 @@ void register_core(State &S)
     Value v = pair_car(args);
     if (!v)
       return {};
-    if (v->get_type() != TPAIR)
+    if (v.get_type() != TPAIR)
       throw std::runtime_error("car expects a pair");
     return pair_car(v);
   });
@@ -147,14 +147,14 @@ void register_core(State &S)
     Value v = pair_car(args);
     if (!v)
       return {};
-    if (v->get_type() != TPAIR)
+    if (v.get_type() != TPAIR)
       throw std::runtime_error("cdr expects a pair");
     return pair_cdr(v);
   });
   S.register_builtin("setcar", [](State &, Value args) -> Value {
     Value p = pair_car(args);
     Value v = pair_car(pair_cdr(args));
-    if (!p || p->get_type() != TPAIR)
+    if (!p || p.get_type() != TPAIR)
       throw std::runtime_error("setcar expects a pair");
     pair_set_car(p, v);
     return v;
@@ -162,7 +162,7 @@ void register_core(State &S)
   S.register_builtin("setcdr", [](State &, Value args) -> Value {
     Value p = pair_car(args);
     Value v = pair_car(pair_cdr(args));
-    if (!p || p->get_type() != TPAIR)
+    if (!p || p.get_type() != TPAIR)
       throw std::runtime_error("setcdr expects a pair");
     pair_set_cdr(p, v);
     return v;

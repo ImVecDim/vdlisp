@@ -13,9 +13,9 @@ inline void register_require(State &S) {
   // require: load a file and return its value; cache results using canonical paths and provide
   // better diagnostic info on failure
   S.register_builtin("require", [](State &S, Value args) -> Value {
-    if (!args || !pair_car(args) || pair_car(args)->get_type() != TSTRING)
+    if (!args || !pair_car(args) || pair_car(args).get_type() != TSTRING)
       throw std::runtime_error("require requires a string");
-    std::string name = *pair_car(args)->get_string();
+    std::string name = *pair_car(args).get_string();
 
     // Build candidate paths: prefer caller-relative then the raw name
     State::SourceLoc loc;

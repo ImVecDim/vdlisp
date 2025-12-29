@@ -12,18 +12,18 @@ extern "C" auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, int argc
         auto* fd = reinterpret_cast<FuncData*>(funcdata_ptr);
         if (!fd) return std::numeric_limits<double>::quiet_NaN();
         Value fptr = S->make_pooled_value(TFUNC);
-        fptr->set_func(fd);
+        fptr.set_func(fd);
         Value head;
         Value *last = &head;
         for (int i = 0; i < argc; ++i) {
             Value num = S->make_number(args[i]);
             *last = S->make_pair(num, Value());
-            PairData *pd = (*last)->get_pair();
+            PairData *pd = (*last).get_pair();
             last = &pd->cdr;
         }
         Value res = S->call(fptr, head, nullptr);
-        if (!res || res->get_type() != TNUMBER) return std::numeric_limits<double>::quiet_NaN();
-        return res->get_number();
+        if (!res || res.get_type() != TNUMBER) return std::numeric_limits<double>::quiet_NaN();
+        return res.get_number();
     } catch (...) {
         return std::numeric_limits<double>::quiet_NaN();
     }

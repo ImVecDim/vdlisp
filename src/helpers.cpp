@@ -85,7 +85,7 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
       // Parse next element. If it's the dot symbol "." then treat the
       // following expression as the dotted-tail (cdr) of the list.
       Value e = parse_at(S, src, pos, line, col, name);
-      if (e && e->get_type() == TSYMBOL && *e->get_symbol() == ".") {
+      if (e && e.get_type() == TSYMBOL && *e.get_symbol() == ".") {
         // dotted-tail: parse the tail expression and splice it as the cdr
         skip_ws_and_comments(src, pos, line, col);
         if (pos >= src.size())
@@ -103,7 +103,7 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
       }
       // Otherwise append the parsed element to the list as before.
       *last = S.make_pair(e, Value());
-      PairData *pd = (*last)->get_pair();
+      PairData *pd = (*last).get_pair();
       S.set_source_loc(*last, name, open_line, open_col);
       last = &pd->cdr;
     }
@@ -228,7 +228,7 @@ auto State::parse_all(const std::string &src, const std::string &name) -> Value
   {
     Value e = parse_at(*this, src, pos, line, col, name);
     *last = make_pair(e, Value());
-    PairData *pd = (*last)->get_pair();
+    PairData *pd = (*last).get_pair();
     last = &pd->cdr;
   }
   return head;
@@ -241,7 +241,7 @@ auto list_of(State &S, std::initializer_list<Value> items) -> Value
   for (auto &it : items)
   {
     *last = S.make_pair(it, Value());
-    PairData *pd = (*last)->get_pair();
+    PairData *pd = (*last).get_pair();
     last = &pd->cdr;
   }
   return head;
@@ -335,14 +335,14 @@ auto value_equal(Value a, Value b) -> bool
 {
   if (a == b) return true;
   if (!a || !b) return false;
-  if (a->get_type() != b->get_type()) return false;
-  switch (a->get_type()) {
-    case TNUMBER: return a->get_number() == b->get_number();
-    case TSTRING: return *a->get_string() == *b->get_string();
-    case TSYMBOL: return *a->get_symbol() == *b->get_symbol();
+  if (a.get_type() != b.get_type()) return false;
+  switch (a.get_type()) {
+    case TNUMBER: return a.get_number() == b.get_number();
+    case TSTRING: return *a.get_string() == *b.get_string();
+    case TSYMBOL: return *a.get_symbol() == *b.get_symbol();
     case TPAIR: {
-      PairData *ap = a->get_pair();
-      PairData *bp = b->get_pair();
+      PairData *ap = a.get_pair();
+      PairData *bp = b.get_pair();
       return value_equal(ap->car, bp->car) && value_equal(ap->cdr, bp->cdr);
     }
     default: return a == b;

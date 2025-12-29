@@ -116,8 +116,7 @@ namespace vdlisp
     Value(Value &&other) noexcept;
     ~Value();
 
-    auto operator=(const Value &other) -> Value&;
-    auto operator=(Value &&other) noexcept -> Value&;
+    auto operator=(Value other) -> Value&;
     auto operator=(std::nullptr_t) -> Value&;
 
     // Getters
@@ -152,15 +151,15 @@ namespace vdlisp
     [[nodiscard]] Prim get_prim() const;
     [[nodiscard]] CFunc get_cfunc() const;
 
-    [[nodiscard]] inline auto operator->() -> Value* { return this; }
-    [[nodiscard]] inline auto operator->() const -> const Value* { return this; }
-    [[nodiscard]] inline auto get() -> Value* { return this; }
-    [[nodiscard]] inline auto get() const -> const Value* { return this; }
+    //[[nodiscard]] inline auto operator->() -> Value* { return this; }
+    //[[nodiscard]] inline auto operator->() const -> const Value* { return this; }
+    //[[nodiscard]] inline auto get() -> Value* { return this; }
+    //[[nodiscard]] inline auto get() const -> const Value* { return this; }
     [[nodiscard]] explicit operator bool() const { return get_type() != TNIL; }
     [[nodiscard]] auto operator==(std::nullptr_t) const -> bool { return get_type() == TNIL; }
     [[nodiscard]] auto operator!=(std::nullptr_t) const -> bool { return get_type() != TNIL; }
-    [[nodiscard]] auto operator==(const Value &rhs) const -> bool { return bits == rhs.bits; }
-    [[nodiscard]] auto operator!=(const Value &rhs) const -> bool { return bits != rhs.bits; }
+    [[nodiscard]] auto operator==(Value rhs) const -> bool { return bits == rhs.bits; }
+    [[nodiscard]] auto operator!=(Value rhs) const -> bool { return bits != rhs.bits; }
     [[nodiscard]] auto identity_key() const -> uint64_t { return bits; }
     void reset() { *this = Value(); }
 
@@ -226,7 +225,7 @@ namespace vdlisp
     bits = kTagString | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
   }
 
-  inline auto Value::get_symbol() const -> std::string* {
+  inline auto Value::get_symbol() const -> std::string* {//TODO
     auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
     return sd ? &sd->value : nullptr;
   }

@@ -69,23 +69,16 @@ Value::~Value() {
   release();
 }
 
-auto Value::operator=(const Value &other) -> Value&
+#include <utility>
+
+auto Value::operator=(Value other) -> Value&
 {
-  if (this == &other) return *this;
-  release();
-  bits = other.bits;
-  retain();
+  // copy-and-swap: `other` is a copy (or moved-in) value; swap bits and let
+  // the destructor of `other` release the previous contents.
+  std::swap(bits, other.bits);
   return *this;
 }
 
-auto Value::operator=(Value &&other) noexcept -> Value&
-{
-  if (this == &other) return *this;
-  release();
-  bits = other.bits;
-  other.bits = kTagNil;
-  return *this;
-}
 
 auto Value::operator=(std::nullptr_t) -> Value&
 {
@@ -206,17 +199,17 @@ auto Value::to_repr(State &S) const -> std::string
       // print first element
       PairData *pd = get_pair();
       if (pd) {
-        s += pd->car ? pd->car->to_repr(S) : std::string("nil");
+        s += pd->car ? pd->car.to_repr(S) : std::string("nil");
         Value cur = pd->cdr;
-        while (cur && cur->get_type() == TPAIR) {
+        while (cur && cur.get_type() == TPAIR) {
           s += " ";
-          PairData *cpd = cur->get_pair();
-          s += cpd->car ? cpd->car->to_repr(S) : std::string("nil");
+          PairData *cpd = cur.get_pair();
+          s += cpd->car ? cpd->car.to_repr(S) : std::string("nil");
           cur = cpd->cdr;
         }
         if (cur) {
           s += " . ";
-          s += cur->to_repr(S);
+          s += cur.to_repr(S);
         }
       }
       s += ")";

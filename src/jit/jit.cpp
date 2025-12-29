@@ -85,20 +85,20 @@ auto JITCompiler::getContext() -> llvm::LLVMContext& {
 static void collect_called_funcs(vdlisp::Value expr, std::vector<vdlisp::FuncData*> &out, vdlisp::Env *closure) {
     using namespace vdlisp;
     if (!expr) return;
-    if (expr->get_type() == TPAIR) {
-        vdlisp::PairData *pd = expr->get_pair();
+    if (expr.get_type() == TPAIR) {
+        vdlisp::PairData *pd = expr.get_pair();
         Value car = pd->car;
         Value cdr = pd->cdr;
-        if (car && car->get_type() == TSYMBOL) {
-            std::string name = *car->get_symbol();
+        if (car && car.get_type() == TSYMBOL) {
+            std::string name = *car.get_symbol();
             Env *e = closure;
             if (e) retain_env(e);
             while (e) {
                 auto it = e->map.find(name);
                 if (it != e->map.end()) {
                     Value v = it->second;
-                    if (v && v->get_type() == TFUNC) {
-                        out.push_back(v->get_func());
+                    if (v && v.get_type() == TFUNC) {
+                        out.push_back(v.get_func());
                     }
                     break;
                 }

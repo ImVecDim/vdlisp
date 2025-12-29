@@ -24,7 +24,7 @@ static auto make_string_list_range(State &S, It b, It e) -> Value
   Value *last = &head;
   for (; b != e; ++b) {
     *last = S.make_pair(S.make_string(*b), Value());
-    PairData *pd = (*last)->get_pair();
+    PairData *pd = (*last).get_pair();
     last = &pd->cdr;
   }
   return head;
@@ -116,11 +116,11 @@ void State::shutdown_and_purge_pools()
   // Clear closure envs held by functions/macros in the intern table.
   for (auto &kv : symbol_intern) {
     Value &v = kv.second;
-    if (v && v->get_type() == TFUNC) {
-      FuncData *fd = v->get_func();
+    if (v && v.get_type() == TFUNC) {
+      FuncData *fd = v.get_func();
       if (fd && fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
-    } else if (v && v->get_type() == TMACRO) {
-      MacroData *md = v->get_macro();
+    } else if (v && v.get_type() == TMACRO) {
+      MacroData *md = v.get_macro();
       if (md && md->closure_env) { release_env(md->closure_env); md->closure_env = nullptr; }
     }
     // Reset the Value to trigger release of referenced payloads
@@ -141,11 +141,11 @@ void State::shutdown_and_purge_pools()
       // clear function closure_envs for values stored in env maps
       for (auto &mkv : e->map) {
         Value &val = mkv.second;
-        if (val && val->get_type() == TFUNC) {
-          FuncData *fd = val->get_func();
+        if (val && val.get_type() == TFUNC) {
+          FuncData *fd = val.get_func();
           if (fd && fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
-        } else if (val && val->get_type() == TMACRO) {
-          MacroData *md = val->get_macro();
+        } else if (val && val.get_type() == TMACRO) {
+          MacroData *md = val.get_macro();
           if (md && md->closure_env) { release_env(md->closure_env); md->closure_env = nullptr; }
         }
         val = Value();
@@ -182,13 +182,13 @@ auto State::make_nil() -> Value { return {}; }
 auto State::make_number(double n) -> Value
 {
   Value v = make_pooled_value(TNUMBER);
-  v->set_number(n);
+  v.set_number(n);
   return v;
 }
 auto State::make_string(const std::string &s) -> Value
 {
   Value v = make_pooled_value(TSTRING);
-  v->set_string(alloc_string(s));
+  v.set_string(alloc_string(s));
   return v;
 }
 auto State::make_symbol(const std::string &s) -> Value
@@ -197,38 +197,38 @@ auto State::make_symbol(const std::string &s) -> Value
   if (it != symbol_intern.end())
     return it->second;
   Value v = make_pooled_value(TSYMBOL);
-  v->set_symbol(alloc_string(s));
+  v.set_symbol(alloc_string(s));
   symbol_intern[s] = v;
   return v;
 }
 auto State::make_pair(Value car, Value cdr) -> Value
 {
   Value v = make_pooled_value(TPAIR);
-  v->set_pair(alloc_pair(car, cdr));
+  v.set_pair(alloc_pair(car, cdr));
   return v;
 }
 auto State::make_cfunc(const CFunc &fn) -> Value
 {
   Value v = make_pooled_value(TCFUNC);
-  v->set_cfunc(fn);
+  v.set_cfunc(fn);
   return v;
 }
 auto State::make_prim(const Prim &fn) -> Value
 {
   Value v = make_pooled_value(TPRIM);
-  v->set_prim(fn);
+  v.set_prim(fn);
   return v;
 }
 auto State::make_function(Value params, Value body, Env *env) -> Value
 {
   Value v = make_pooled_value(TFUNC);
-  v->set_func(alloc_func(params, body, env));
+  v.set_func(alloc_func(params, body, env));
   return v;
 }
 auto State::make_macro(Value params, Value body, Env *env) -> Value
 {
   Value v = make_pooled_value(TMACRO);
-  v->set_macro(alloc_macro(params, body, env));
+  v.set_macro(alloc_macro(params, body, env));
   return v;
 }
 
@@ -265,10 +265,10 @@ auto State::bind(Value sym, Value v, Env *env) -> Value
 {
   if (!env)
     env = global;
-  if (!sym || sym->get_type() != TSYMBOL)
+  if (!sym || sym.get_type() != TSYMBOL)
     throw std::runtime_error("bind expects a symbol");
   // Move into the map to avoid incrementing/decrementing refcounts unnecessarily
-  env->map[*sym->get_symbol()] = std::move(v);
+  env->map[*sym.get_symbol()] = std::move(v);
   return v;
 }
 
@@ -276,7 +276,7 @@ auto State::set(Value sym, Value v, Env *env) -> Value
 {
   if (!env)
     env = global;
-  std::string key = *sym->get_symbol();
+  std::string key = *sym.get_symbol();
   auto e = env;
   while (e)
   {
@@ -334,7 +334,7 @@ static auto eval_args(State &S, Value list, Env *env) -> Value
     Value acdr = pair_cdr(a);
     Value av = S.eval(acar, env);
     *last = S.make_pair(av, Value());
-    PairData *lpd = (*last)->get_pair();
+    PairData *lpd = (*last).get_pair();
     last = &lpd->cdr;
     a = acdr;
   }
@@ -351,9 +351,9 @@ static void bind_params_to_env(
   Value a = args;
   while (p)
   {
-    if (p && p->get_type() == TSYMBOL) {
+    if (p && p.get_type() == TSYMBOL) {
       // if params is a bare symbol, bind the rest of args to it
-      out[*p->get_symbol()] = a;
+      out[*p.get_symbol()] = a;
       break;
     }
 
@@ -363,10 +363,10 @@ static void bind_params_to_env(
     Value pcar = pair_car(p);
     Value pcdr = pair_cdr(p);
 
-    if (pcar && pcar->get_type() == TSYMBOL)
+    if (pcar && pcar.get_type() == TSYMBOL)
     {
       Value bound = a ? pair_car(a) : Value();
-      out[*pcar->get_symbol()] = bound;
+      out[*pcar.get_symbol()] = bound;
     }
 
     p = pcdr;
@@ -394,7 +394,7 @@ auto State::eval(Value expr, Env *env) -> Value
     return {};
   if (!env)
     env = global;
-  switch (expr->get_type())
+  switch (expr.get_type())
   {
   case TSYMBOL:
   {
@@ -404,7 +404,7 @@ auto State::eval(Value expr, Env *env) -> Value
     // to detect presence in the map.
     auto e = env ? env : global;
     while (e) {
-      auto it = e->map.find(*expr->get_symbol());
+      auto it = e->map.find(*expr.get_symbol());
       if (it != e->map.end()) {
         Value v = it->second;
         ctx.commit();
@@ -415,15 +415,15 @@ auto State::eval(Value expr, Env *env) -> Value
     {
       State::SourceLoc sl;
       if (get_source_loc(expr, sl)) {
-        throw ParseError(sl, std::string("unbound symbol: ") + *expr->get_symbol());
+        throw ParseError(sl, std::string("unbound symbol: ") + *expr.get_symbol());
       }
     }
-    throw std::runtime_error("unbound symbol: " + *expr->get_symbol());
+    throw std::runtime_error("unbound symbol: " + *expr.get_symbol());
   }
   case TPAIR:
   {
     // function application or special form
-    PairData *pd = expr->get_pair();
+    PairData *pd = expr.get_pair();
     Value car = pd->car;
     Value cdr = pd->cdr;
     Value fn_expr = car;
@@ -431,17 +431,17 @@ auto State::eval(Value expr, Env *env) -> Value
     if (!fn)
       throw std::runtime_error("attempt to call nil");
     // Special form (prim) receives unevaluated args and env
-    if (fn->get_type() == TPRIM)
+    if (fn.get_type() == TPRIM)
     {
-      Value res = fn->get_prim()(*this, cdr, env);
+      Value res = fn.get_prim()(*this, cdr, env);
       ctx.commit();
       return res;
     }
     // Macro: bind params to raw args, evaluate body, then evaluate result in caller env
-    if (fn->get_type() == TMACRO)
+    if (fn.get_type() == TMACRO)
     {
       // bind params to raw args
-      MacroData *md = fn->get_macro();
+      MacroData *md = fn.get_macro();
       Value params = md->params;
       Value body = md->body;
       Env *closure_env = md->closure_env;
@@ -453,8 +453,8 @@ auto State::eval(Value expr, Env *env) -> Value
       bool have_call_loc = (get_source_loc(current_expr, call_loc) || get_source_loc(expr, call_loc));
       std::vector<State::SourceLoc> call_chain_entry;
       if (have_call_loc) {
-        if (car && car->get_type() == TSYMBOL)
-          call_loc.label = std::string("macro ") + *car->get_symbol();
+        if (car && car.get_type() == TSYMBOL)
+          call_loc.label = std::string("macro ") + *car.get_symbol();
         else
           call_loc.label = std::string("macro");
         call_chain_entry.push_back(call_loc);
@@ -526,24 +526,23 @@ auto State::call(Value fn, Value args, Env *env) -> Value
   (void)env;
   if (!fn)
     throw std::runtime_error("attempt to call nil");
-  if (fn->get_type() == TCFUNC)
+  if (fn.get_type() == TCFUNC)
   {
-    return fn->get_cfunc()(*this, args);
+    return fn.get_cfunc()(*this, args);
   }
-  else if (fn->get_type() == TFUNC)
+  else if (fn.get_type() == TFUNC)
   {
     // If JIT compiled machine code is available and the arguments are all
     // numeric, call the native code path for performance.
-    FuncData *fd = fn->get_func();
-
+    FuncData *fd = fn.get_func();
     // Check if arguments are all numeric
     std::vector<double> darr;
     Value a = args;
     bool numeric = true;
     while (a) {
       Value av = pair_car(a);
-      if (!av || av->get_type() != TNUMBER) { numeric = false; break; }
-      darr.push_back(av->get_number());
+      if (!av || av.get_type() != TNUMBER) { numeric = false; break; }
+      darr.push_back(av.get_number());
       a = pair_cdr(a);
     }
 
@@ -633,7 +632,7 @@ auto State::do_list(Value body, Env *env) -> Value
   Value res;
   while (body)
   {
-    PairData *pd = body->get_pair();
+    PairData *pd = body.get_pair();
     Value car = pd->car;
     Value cdr = pd->cdr;
     res = eval(car, env);
@@ -645,7 +644,7 @@ auto State::do_list(Value body, Env *env) -> Value
 auto State::to_string(Value v) -> std::string
 {
   if (!v) return "nil";
-  return v->to_repr(*this);
+  return v.to_repr(*this);
 }
 
 // Utilities and parsing helpers have been moved to `src/helpers.cpp`.
