@@ -105,7 +105,7 @@ static auto check_nanboxing_environment() -> bool
 
 } // namespace
 
-int main(int argc, char **argv)
+auto main(int argc, char **argv) -> int
 {
   if (!check_nanboxing_environment()) {
     std::cerr << "vdlisp: unsupported platform for NaN-boxing: pointers require more than 48 bits.\n"
