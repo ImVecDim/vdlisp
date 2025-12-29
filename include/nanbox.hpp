@@ -122,13 +122,13 @@ namespace vdlisp
 
     // Getters
 
-    // Hot function, inlined for performance
+    // Hot function, inlined for performance. Use branch hint for the common numeric path.
     [[nodiscard]] inline auto get_type() const -> Type {
       // Check if it's a canonical NaN (numbers)
-      if ((bits & kNaNMask) != kNaNMask) {
+      if (((bits & kNaNMask) != kNaNMask)) [[unlikely]] { // ?????
         return TNUMBER;
       }
-      
+
       // Check the tag for pointer types
       uint64_t tag = bits & kTagMask;
       switch (tag) {
@@ -296,17 +296,22 @@ namespace vdlisp
   }
 
   inline auto Value::is_refcounted(Type t) -> bool {
-    switch (t) {
-      case TPAIR:
-      case TSTRING:
-      case TSYMBOL:
-      case TFUNC:
-      case TMACRO:
-      case TENV:
-        return true;
-      default:
-        return false;
-    }
+    // Use a constexpr lookup table indexed by the Type enum value for
+    // faster, branch-free checks and better inlining opportunities.
+    static constexpr bool kIsRefcounted[] = {
+      /*TNIL*/ false,
+      /*TPAIR*/ true,
+      /*TNUMBER*/ false,
+      /*TSTRING*/ true,
+      /*TSYMBOL*/ true,
+      /*TFUNC*/ true,
+      /*TMACRO*/ true,
+      /*TPRIM*/ false,
+      /*TCFUNC*/ false,
+      /*TENV*/ true
+    };
+    size_t idx = static_cast<size_t>(t);
+    return idx < (sizeof(kIsRefcounted)/sizeof(kIsRefcounted[0])) ? kIsRefcounted[idx] : false;
   }
 
   inline void Value::retain_payload(Type t, void* p) {
