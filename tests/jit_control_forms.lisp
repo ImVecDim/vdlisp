@@ -1,7 +1,7 @@
 ;; JIT control forms test: exercises cond, let, while inside functions and triggers JIT
 
 ;; cond
-(set f_cond (fn (x) (cond ((> x 0) x) (else (- x)))))
+(set f_cond (fn (x) (cond ((> x 0) x) (#t (- x)))))
 (f_cond 1)
 (f_cond 2)
 (f_cond 3)

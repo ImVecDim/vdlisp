@@ -41,8 +41,7 @@ State::State()
   register_core(*this);
   // convenience: bind true symbol '#t'
   bind_global("#t", make_symbol("#t"));
-  // bind 'else' as alias for '#t' for cond
-  bind_global("else", make_symbol("#t"));
+  // Note: do not bind 'else' globally; use `#t` for cond default branch
 }
 
 // -------------------- State allocators --------------------
@@ -159,8 +158,7 @@ void State::shutdown_and_purge_pools()
   }
 
   // Clear other runtime caches and containers
-  for (auto *e : env_stack) release_env(e);
-  env_stack.clear();
+
   if (global) { release_env(global); global = nullptr; }
 
   for (auto &kv : loaded_modules) kv.second = Value();

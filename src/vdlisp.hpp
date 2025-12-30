@@ -14,7 +14,6 @@ namespace vdlisp
   class State
   {
   public:
-    std::vector<Env*> env_stack; // not required, but useful
     Env *global = nullptr;
     std::unordered_map<std::string, Value> symbol_intern;
 

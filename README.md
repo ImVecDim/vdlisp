@@ -138,8 +138,7 @@ EnvGuard eg(e); // 作用域结束时自动 release
 - `nil` 为假
 - 其它非 `nil` 都为真
 - 启动时会在全局环境绑定：
-  - `#t`：真值符号
-  - `else`：`cond` 中的别名（绑定为 `#t`）
+  - `#t`：真值符号（推荐在 `cond` 的默认分支中使用 `#t`）
 
 ### 列表与 pair
 
@@ -174,7 +173,7 @@ EnvGuard eg(e); // 作用域结束时自动 release
 
 ### 条件与循环
 
-- `(cond (test1 expr...) (test2 expr...) (else expr...))`
+- `(cond (test1 expr...) (test2 expr...) (#t expr...))`
 - `(while cond body...)`
 
 说明：代码注释中提到“`if` 作为 primitive 被移除，建议用 `cond` 在语言层实现宏”。当前仓库默认并未内置 `if`，但程序启动时会尝试自动加载 `scripts/lang_basics.lisp`（若存在），你可以在该文件中实现 `if` 等语法糖。

@@ -88,7 +88,7 @@ TESTS=(
   # Conditionals, set, let, while
   $'(cond ((> 2 3) 1) ((< 2 3) 2))' '2'
   $'(cond ((> 1 2) 1) ((< 1 2) (+ 1 2)))' '3'
-  $'(cond (else 42))' '42'
+  $'(cond (#t 42))' '42'
   $'(set x 5)\nx' '5'
   $'(let (x 1 y 2) (+ x y))' '3'
   $'(let (i 0) (while (< i 3) (set i (+ i 1))) i)' '3'
