@@ -23,7 +23,7 @@ endif()
 add_compile_definitions(_GNU_SOURCE EXPERIMENTAL_KEY_INSTRUCTIONS __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS __STDC_LIMIT_MACROS)
 add_compile_options(-Wno-unused-parameter -Wno-deprecated-declarations)
 
-include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # Prefer using llvm-config when available for portable flags
 find_program(LLVM_CONFIG NAMES llvm-config llvm-config-21)
