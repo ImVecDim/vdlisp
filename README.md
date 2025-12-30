@@ -16,32 +16,28 @@
 - C++20 编译器（默认 `clang++`）
 
 > 注意：项目在 CMake 中已设置为使用 C++20，并在 target 级别强制 `-std=c++20` 以覆盖 `llvm-config` 可能添加的旧 `-std=` 标志。
-- LLVM（需要 `llvm-config`，并链接 `core`、`native` 等库）
+- LLVM（用于 JIT。优先通过 `llvm-config` 获取编译/链接标志）
 - GNU readline（用于 REPL 的行编辑与历史记录）
-- Boost（使用 `boost::object_pool` 作为运行时对象内存池）
+- （可选）AddressSanitizer：用于内存问题排查（见下文）
 
 说明：构建使用 `llvm-config`（通过 `CMake` 检测）来获取 LLVM 的编译与链接标志；如果系统上没有 `llvm-config`，CMake 会尝试在常见路径回退查找。
 
-## 内存池与泄漏检测
+## 内存与泄漏检测
 
-运行时对象（string/pair/func/macro 等）使用 `boost::object_pool` 分配，以减少频繁 `new/delete` 的开销，并配合 NaN-boxing 让 `Value` 内部保存原始指针。
+运行时对象（string/pair/func/macro/env 等）采用引用计数（见 `RcBase`），`Value` 使用 NaN-boxing 表示来保存 number 或指针 payload。
 
-为了让 ASan/LSan/Valgrind 这类工具更容易判断“是否真的泄漏”，程序在退出前会进行一次统一清理：
+为了便于泄漏检测工具（ASan/LSan/Valgrind）判断生命周期，程序在退出前会执行一次“尽力清理”：
 
 - 正常从 `main` 返回时：通过 RAII guard 调用 `State::shutdown_and_purge_pools()`
-- 调用 Lisp 内置 `(exit ...)` 时：在 `std::exit(...)` 之前同样会调用 `State::shutdown_and_purge_pools()`
 
-`shutdown_and_purge_pools()` 的目标是：
+`shutdown_and_purge_pools()` 会清理全局引用（符号表、模块缓存、环境链等）并主动断开一些常见循环引用（例如闭包与环境之间的环），从而让引用计数能够回收更多对象。
 
-- 先释放解释器侧的全局引用（模块缓存、符号表等），让 `Value` 的析构能安全发生
-- 再对各个 pool 执行 best-effort 的 `purge_memory()`，并销毁/重置 pool，以尽量把内存归还给系统
+如果你想用 ASan 跑一遍：
 
-提示：如果你在跑泄漏检测，可以使用基于 Debug 的构建并启用 AddressSanitizer：
-
-- 使用 CMake 生成 Debug/ASan 构建，例如：
-  - `cmake -S . -B build -D ENABLE_LTO=OFF -DCMAKE_BUILD_TYPE=Debug`
-  - 编辑 `CMakeLists.txt` 或在命令行添加 `-DCMAKE_CXX_FLAGS="-fsanitize=address -g"`，然后 `cmake --build build`
-  - 运行时示例：`ASAN_OPTIONS=detect_leaks=1 build/vdlisp`
+- 生成一个 Debug + ASan 构建目录：
+  - `cmake -S . -B build_asan -D CMAKE_BUILD_TYPE=Debug -D ENABLE_LTO=OFF -D CMAKE_CXX_FLAGS="-fsanitize=address -g"`
+  - `cmake --build build_asan -j$(nproc)`
+- 运行（示例）：`ASAN_OPTIONS=detect_leaks=1 ./build_asan/vdlisp tests/pool_test.lisp`
 
 ### 内存与生命周期（Env 引用计数与 EnvGuard）
 
@@ -66,12 +62,16 @@ EnvGuard eg(e); // 作用域结束时自动 release
 
 项目使用 CMake 作为首选构建方式。常用命令如下：
 
-- 生成（禁用 LTO 以加快开发迭代）：
-  - `cmake -S . -B build -D ENABLE_LTO=OFF`
-- 构建（使用所有 CPU 内核并行）：
+推荐用 out-of-source 构建。常见组合：
+
+- Release（默认）：
+  - `cmake -S . -B build -D CMAKE_BUILD_TYPE=Release -D ENABLE_LTO=ON`
   - `cmake --build build -j$(nproc)`
-- 产物：`build/vdlisp`
-- 启用 LTO/高优化：设置 `-D ENABLE_LTO=ON` 或切换到 `Release` 配置。
+  - 产物：`build/vdlisp`
+- Debug（更适合调试/回溯）：
+  - `cmake -S . -B build_debug -D CMAKE_BUILD_TYPE=Debug -D ENABLE_LTO=OFF`
+  - `cmake --build build_debug -j$(nproc)`
+  - 产物：`build_debug/vdlisp`
 
 - 使用 `ccache` 缓存编译（可显著加速重复构建）：
   - 临时方法：
@@ -87,9 +87,9 @@ EnvGuard eg(e); // 作用域结束时自动 release
 
 ### 交互式 REPL
 
-直接运行：
+直接运行（以 Release 构建为例）：
 
-- `./vdlisp`
+- `./build/vdlisp`
 
 特性：
 - 提示符为 `> `
@@ -98,7 +98,7 @@ EnvGuard eg(e); // 作用域结束时自动 release
 
 ### 执行 Lisp 脚本
 
-- `./vdlisp path/to/file.lisp`
+- `./build/vdlisp path/to/file.lisp`
 
 行为：
 - 读取文件并 `parse_all`，依次执行（类似 `do`），最后把“最后一个表达式的值”打印到 stdout
@@ -106,9 +106,11 @@ EnvGuard eg(e); // 作用域结束时自动 release
 
 ### 示例
 
-- 最小示例（仓库内）：[simple_test.lisp](simple_test.lisp)
-- `cond` 示例：[cond_test.lisp](cond_test.lisp)
-- JIT/函数示例：[tmp_jit_test.lisp](tmp_jit_test.lisp)
+仓库里可直接跑的脚本（也用于测试）：
+
+- 分配/生命周期压力测试：[tests/pool_test.lisp](tests/pool_test.lisp)
+- JIT 控制流覆盖：[tests/jit_control_forms.lisp](tests/jit_control_forms.lisp)
+- 更长时间运行的压力用例：[tests/longrun.lisp](tests/longrun.lisp)
 
 ## 语言速览
 
@@ -212,7 +214,7 @@ EnvGuard eg(e); // 作用域结束时自动 release
 - `(print f)`：JIT 后会显示 `<jit_func>`（未 JIT 时为 `<function>`）
 
 实现细节提示：
-- JIT 代码可通过桥接函数 `VDLISP__call_from_jit` 回调解释器（见 [src/jit/jit_bridge.cpp](src/jit/jit_bridge.cpp)）
+- JIT 代码可通过桥接函数 `VDLISP__call_from_jit` 回调解释器（见 [src/jit/jit.hpp](src/jit/jit.hpp)）
 - 运行时使用 NaN-boxing 存储值；程序启动时会检查指针是否能放入 48-bit payload（典型 x86_64 “canonical address” 假设）。若平台不满足会直接退出。
 
 ## 测试
@@ -234,23 +236,20 @@ EnvGuard eg(e); // 作用域结束时自动 release
 
 ## 目录结构
 
-- [include/](include/)：头文件
-  - [include/vdlisp.hpp](include/vdlisp.hpp)：`State`/接口
-  - [include/nanbox.hpp](include/nanbox.hpp)：值表示（NaN-boxing）、`FuncData`/`MacroData`
-  - [include/core.hpp](include/core.hpp)：核心内置注册接口
-  - [include/require.hpp](include/require.hpp)：`require` 实现（内联注册）
-  - [include/jit/](include/jit/)：JIT 相关头
-- [src/](src/)：实现
-  - [src/vdlisp.cpp](src/vdlisp.cpp)：解释器主体 + REPL + 主入口 + JIT 触发
+- [src/](src/)：解释器与运行时
+  - [src/main.cpp](src/main.cpp)：程序入口（REPL/脚本执行、自动加载 `scripts/lang_basics.lisp`）
+  - [src/vdlisp.cpp](src/vdlisp.cpp)：解释器主体（`State`、eval/call、JIT 触发逻辑等）
+  - [src/nanbox.hpp](src/nanbox.hpp)：值表示（NaN-boxing）、引用计数基类 `RcBase`、`Env`/`EnvGuard`
   - [src/helpers.cpp](src/helpers.cpp)：解析器、错误定位与通用 helper
   - [src/core.cpp](src/core.cpp)：核心内置函数/特殊形式注册
-  - [src/jit/](src/jit/)：LLVM IR 生成与 JIT 编译器
-- [tests/](tests/)：测试脚本与测试用例
-- [compile_commands.json](compile_commands.json)：便于 clangd/IDE 提示
+  - [src/require.hpp](src/require.hpp)：`require`（模块加载/缓存）
+  - [src/jit/](src/jit/)：LLVM IR 生成与 MCJIT 编译
+- [tests/](tests/)：测试脚本与用例（`tests/test.sh`）
+- [scripts/](scripts/)：语言层辅助（启动时可自动加载）
+- [grammar.ebnf](grammar.ebnf)：语法定义
 
 ## 开发提示
 
-- 如果你在本地用 clangd：仓库已提供 [compile_commands.json](compile_commands.json)
 - 如果你想加语言层语法糖：可以创建 `scripts/lang_basics.lisp`，程序启动会自动加载（若文件存在）
 
 ## AI提示
