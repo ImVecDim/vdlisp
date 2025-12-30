@@ -11,8 +11,10 @@
 #include <string>
 #include <functional>
 
-// Forward declare FuncData to avoid including nanbox.hpp here.
-namespace vdlisp { class FuncData; }
+#include "nanbox.hpp"
+#include "vdlisp.hpp"
+#include <unordered_map>
+#include <limits>
 
 class JITCompiler {
 public:
@@ -32,6 +34,31 @@ private:
 
 // Global shared JIT instance used by the runtime; tests may rely on this being
 // available to trigger compilation consistently.
+
+extern "C" inline auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, int argc) -> double {
+    try {
+        vdlisp::State* S = vdlisp::jit_active_state;
+        if (!S) return std::numeric_limits<double>::quiet_NaN();
+        auto* fd = reinterpret_cast<vdlisp::FuncData*>(funcdata_ptr);
+        if (!fd) return std::numeric_limits<double>::quiet_NaN();
+        vdlisp::Value fptr = S->make_pooled_value(vdlisp::TFUNC);
+        fptr.set_func(fd);
+        vdlisp::Value head;
+        vdlisp::Value *last = &head;
+        for (int i = 0; i < argc; ++i) {
+            vdlisp::Value num = S->make_number(args[i]);
+            *last = S->make_pair(num, vdlisp::Value());
+            vdlisp::PairData *pd = (*last).get_pair();
+            last = &pd->cdr;
+        }
+        vdlisp::Value res = S->call(fptr, head, nullptr);
+        if (!res || res.get_type() != vdlisp::TNUMBER) return std::numeric_limits<double>::quiet_NaN();
+        return res.get_number();
+    } catch (...) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+}
+
 extern JITCompiler global_jit;
 
 #endif // JIT_JIT_HPP
