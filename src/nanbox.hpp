@@ -41,19 +41,14 @@ namespace vdlisp
 
   // Forward declarations needed for the implementation
   namespace detail {
-    inline auto double_to_bits(double value) -> uint64_t {
-      return std::bit_cast<uint64_t>(value);
-    }
-
-    inline auto bits_to_double(uint64_t bits) -> double {
-      return std::bit_cast<double>(bits);
-    }
+    inline constexpr auto double_to_bits(double value) noexcept -> uint64_t { return std::bit_cast<uint64_t>(value); }
+    inline constexpr auto bits_to_double(uint64_t bits) noexcept -> double { return std::bit_cast<double>(bits); }
   } // namespace detail
 
   struct RcBase {
   protected:
     RcBase(size_t init = 1) noexcept : refs_{init} {}
-    ~RcBase() = default;
+    ~RcBase() noexcept = default;
   private:
     size_t refs_{1};
   public:
@@ -73,8 +68,8 @@ namespace vdlisp
   };
 
   // Helpers to manage Env reference counts (centralized for clarity)
-  inline void retain_env(Env *e) { if (e) e->inc_ref(); }
-  inline void release_env(Env *e) { if (!e) return; if (e->dec_ref() == 0) delete e; }
+  inline void retain_env(Env *e) noexcept { if (e) e->inc_ref(); }
+  inline void release_env(Env *e) noexcept { if (!e) return; if (e->dec_ref() == 0) delete e; }
 
   // RAII guard that owns a temporary Env* reference and releases it on destruction.
   struct EnvGuard {
@@ -122,7 +117,7 @@ namespace vdlisp
     // Getters
 
     // Hot function, inlined for performance. Use branch hint for the common numeric path.
-    [[nodiscard]] inline auto get_type() const -> Type {
+    [[nodiscard]] inline auto get_type() const noexcept -> Type {
       // Check if it's a canonical NaN (numbers)
       if (((bits & kNaNMask) != kNaNMask)) [[unlikely]] { // ?????
         return TNUMBER;
@@ -142,14 +137,14 @@ namespace vdlisp
         default:         return TNIL;
       }
     }
-    [[nodiscard]] auto get_number() const -> double;
-    [[nodiscard]] auto get_pair() const -> PairData*;
-    [[nodiscard]] auto get_string() const -> std::string*;
-    [[nodiscard]] auto get_symbol() const -> std::string*;
-    [[nodiscard]] auto get_func() const -> FuncData*;
-    [[nodiscard]] auto get_macro() const -> MacroData*;
-    [[nodiscard]] Prim get_prim() const;
-    [[nodiscard]] CFunc get_cfunc() const;
+    [[nodiscard]] auto get_number() const noexcept -> double;
+    [[nodiscard]] auto get_pair() const noexcept -> PairData*;
+    [[nodiscard]] auto get_string() const noexcept -> std::string*;
+    [[nodiscard]] auto get_symbol() const noexcept -> std::string*;
+    [[nodiscard]] auto get_func() const noexcept -> FuncData*;
+    [[nodiscard]] auto get_macro() const noexcept -> MacroData*;
+    [[nodiscard]] Prim get_prim() const noexcept;
+    [[nodiscard]] CFunc get_cfunc() const noexcept;
 
     //[[nodiscard]] inline auto operator->() -> Value* { return this; }
     //[[nodiscard]] inline auto operator->() const -> const Value* { return this; }
@@ -160,7 +155,7 @@ namespace vdlisp
     [[nodiscard]] auto operator!=(std::nullptr_t) const -> bool { return get_type() != TNIL; }
     [[nodiscard]] auto operator==(Value rhs) const -> bool { return bits == rhs.bits; }
     [[nodiscard]] auto operator!=(Value rhs) const -> bool { return bits != rhs.bits; }
-    [[nodiscard]] auto identity_key() const -> uint64_t { return bits; }
+    [[nodiscard]] auto identity_key() const noexcept -> uint64_t { return bits; }
     void reset() { *this = Value(); }
 
     // High-level helpers
@@ -168,22 +163,22 @@ namespace vdlisp
     auto to_repr(State &S) const -> std::string;
 
     // Setters
-    void set_number(double value);
-    void set_pair(PairData* ptr);
-    void set_string(StringData* ptr);
-    void set_symbol(StringData* ptr);
-    void set_func(FuncData* ptr);
-    void set_macro(MacroData* ptr);
-    void set_prim(Prim fn);
-    void set_cfunc(CFunc fn);
+    void set_number(double value) noexcept;
+    void set_pair(PairData* ptr) noexcept;
+    void set_string(StringData* ptr) noexcept;
+    void set_symbol(StringData* ptr) noexcept;
+    void set_func(FuncData* ptr) noexcept;
+    void set_macro(MacroData* ptr) noexcept;
+    void set_prim(Prim fn) noexcept;
+    void set_cfunc(CFunc fn) noexcept;
 
   private:
-    void retain();
-    void release();
-    [[nodiscard]] auto payload_ptr() const -> void* { return reinterpret_cast<void*>(bits & kPayloadMask); }
-    static void retain_payload(Type t, void* p);
-    static void release_payload(Type t, void* p);
-    static auto is_refcounted(Type t) -> bool;
+    void retain() noexcept;
+    void release() noexcept;
+    [[nodiscard]] auto payload_ptr() const noexcept -> void* { return reinterpret_cast<void*>(bits & kPayloadMask); }
+    static void retain_payload(Type t, void* p) noexcept;
+    static void release_payload(Type t, void* p) noexcept;
+    static auto is_refcounted(Type t) noexcept -> bool;
 
     // Use NaN-boxing to store all value types in a single 64-bit integer
     // Runtime assumptions are documented in the .cpp implementation.
@@ -191,14 +186,14 @@ namespace vdlisp
   };
 
   // Inline short Value methods for performance
-  inline auto Value::get_number() const -> double {
+  inline auto Value::get_number() const noexcept -> double {
     double result;
     static_assert(sizeof(double) == sizeof(bits), "Double must be 64-bit");
     std::memcpy(&result, &bits, sizeof(result));
     return result;
   }
 
-  inline void Value::set_number(double value) {
+  inline void Value::set_number(double value) noexcept {
     release();
     std::memcpy(&bits, &value, sizeof(bits));
     if ((bits & kNaNMask) == kNaNMask) {
@@ -206,98 +201,61 @@ namespace vdlisp
     }
   }
 
-  inline auto Value::get_pair() const -> PairData* {
-    return reinterpret_cast<PairData*>(bits & kPayloadMask);
-  }
+  inline auto Value::get_pair() const noexcept -> PairData* { return reinterpret_cast<PairData*>(bits & kPayloadMask); }
 
-  inline void Value::set_pair(PairData* ptr) {
-    release();
-    bits = kTagPair | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-  }
+  inline void Value::set_pair(PairData* ptr) noexcept { release(); bits = kTagPair | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
 
-  inline auto Value::get_string() const -> std::string* {
-    auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
-    return sd ? &sd->value : nullptr;
-  }
+  inline auto Value::get_string() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
 
-  inline void Value::set_string(StringData* ptr) {
-    release();
-    bits = kTagString | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-  }
+  inline void Value::set_string(StringData* ptr) noexcept { release(); bits = kTagString | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
 
-  inline auto Value::get_symbol() const -> std::string* {//TODO
-    auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask);
-    return sd ? &sd->value : nullptr;
-  }
+  inline auto Value::get_symbol() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
 
-  inline void Value::set_symbol(StringData* ptr) {
-    release();
-    bits = kTagSymbol | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-  }
+  inline void Value::set_symbol(StringData* ptr) noexcept { release(); bits = kTagSymbol | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
 
-  inline auto Value::get_func() const -> FuncData* {
-    return reinterpret_cast<FuncData*>(bits & kPayloadMask);
-  }
+  inline auto Value::get_func() const noexcept -> FuncData* { return reinterpret_cast<FuncData*>(bits & kPayloadMask); }
 
-  inline void Value::set_func(FuncData* ptr) {
-    release();
-    bits = kTagFunc | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-  }
+  inline void Value::set_func(FuncData* ptr) noexcept { release(); bits = kTagFunc | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
 
-  inline auto Value::get_macro() const -> MacroData* {
-    return reinterpret_cast<MacroData*>(bits & kPayloadMask);
-  }
+  inline auto Value::get_macro() const noexcept -> MacroData* { return reinterpret_cast<MacroData*>(bits & kPayloadMask); }
 
-  inline void Value::set_macro(MacroData* ptr) {
-    release();
-    bits = kTagMacro | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask);
-  }
+  inline void Value::set_macro(MacroData* ptr) noexcept { release(); bits = kTagMacro | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
 
-  inline Prim Value::get_prim() const {
+  inline Prim Value::get_prim() const noexcept {
     Prim fn;
     uint64_t payload = bits & kPayloadMask;
     std::memcpy(&fn, &payload, sizeof(fn));
     return fn;
   }
 
-  inline void Value::set_prim(Prim fn) {
-    release();
-    uint64_t payload = 0;
-    std::memcpy(&payload, &fn, sizeof(fn));
-    bits = kTagPrim | (payload & kPayloadMask);
-  }
+  inline void Value::set_prim(Prim fn) noexcept { release(); uint64_t payload = 0; std::memcpy(&payload, &fn, sizeof(fn)); bits = kTagPrim | (payload & kPayloadMask); }
 
-  inline CFunc Value::get_cfunc() const {
+  inline CFunc Value::get_cfunc() const noexcept {
     CFunc fn;
     uint64_t payload = bits & kPayloadMask;
     std::memcpy(&fn, &payload, sizeof(fn));
     return fn;
   }
 
-  inline void Value::set_cfunc(CFunc fn) {
-    release();
-    uint64_t payload = 0;
-    std::memcpy(&payload, &fn, sizeof(fn));
-    bits = kTagCFunc | (payload & kPayloadMask);
-  }
+  inline void Value::set_cfunc(CFunc fn) noexcept { release(); uint64_t payload = 0; std::memcpy(&payload, &fn, sizeof(fn)); bits = kTagCFunc | (payload & kPayloadMask); }
 
-  inline void Value::retain() {
+  inline void Value::retain() noexcept {
     Type t = get_type();
     if (!is_refcounted(t)) return;
     retain_payload(t, payload_ptr());
   }
 
-  inline void Value::release() {
+  inline void Value::release() noexcept {
     Type t = get_type();
     if (!is_refcounted(t)) return;
     release_payload(t, payload_ptr());
     bits = kTagNil;
   }
 
-  inline auto Value::is_refcounted(Type t) -> bool {
+  inline auto Value::is_refcounted(Type t) noexcept -> bool {
     // Use a constexpr lookup table indexed by the Type enum value for
     // faster, branch-free checks and better inlining opportunities.
-    static constexpr bool kIsRefcounted[] = {
+    constexpr bool kIsRefcounted[] = {
       /*TNIL*/ false,
       /*TPAIR*/ true,
       /*TNUMBER*/ false,
@@ -313,11 +271,7 @@ namespace vdlisp
     return idx < (sizeof(kIsRefcounted)/sizeof(kIsRefcounted[0])) ? kIsRefcounted[idx] : false;
   }
 
-  inline void Value::retain_payload(Type t, void* p) {
-    if (!p) return;
-    auto *rc = static_cast<RcBase*>(p);
-    rc->inc_ref();
-  }
+  inline void Value::retain_payload(Type t, void* p) noexcept { if (!p) return; auto *rc = static_cast<RcBase*>(p); rc->inc_ref(); }
 
   class PairData : public RcBase { public: Value car; Value cdr; };
 

@@ -7,7 +7,7 @@
 
 using namespace vdlisp;
 
-Env::~Env() {
+Env::~Env() noexcept {
   if (parent) {
     release_env(parent);
     parent = nullptr;
@@ -123,7 +123,7 @@ auto Value::operator=(std::nullptr_t) -> Value&
 
 // inlined in header (include/nanbox.hpp)
 
-void Value::release_payload(Type t, void* p)
+void Value::release_payload(Type t, void* p) noexcept
 {
   if (!p) return;
   auto *rc = static_cast<RcBase*>(p);

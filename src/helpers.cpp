@@ -8,44 +8,25 @@
 
 namespace vdlisp {
 
-static auto is_delim(char c) -> bool
+static auto is_delim(char c) noexcept -> bool
 {
   return std::isspace((unsigned char)c) || c == '(' || c == ')' || c == '\'' || c == '"' || c == ';' || c == '`' || c == ',';
 }
 
-static void advance_pos(const std::string &src, size_t &pos, size_t &line, size_t &col)
+static void advance_pos(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept
 {
   if (pos >= src.size())
     return;
   char c = src[pos++];
-  if (c == '\n')
-  {
-    ++line;
-    col = 1;
-  }
-  else
-  {
-    ++col;
-  }
+  if (c == '\n') { ++line; col = 1; } else { ++col; }
 }
 
-static void skip_ws_and_comments(const std::string &src, size_t &pos, size_t &line, size_t &col)
+static void skip_ws_and_comments(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept
 {
-  while (pos < src.size())
-  {
+  while (pos < src.size()) {
     char c = src[pos];
-    if (std::isspace((unsigned char)c))
-    {
-      advance_pos(src, pos, line, col);
-      continue;
-    }
-    if (c == ';')
-    {
-      // comment until newline
-      while (pos < src.size() && src[pos] != '\n')
-        advance_pos(src, pos, line, col);
-      continue;
-    }
+    if (std::isspace((unsigned char)c)) { advance_pos(src, pos, line, col); continue; }
+    if (c == ';') { while (pos < src.size() && src[pos] != '\n') advance_pos(src, pos, line, col); continue; }
     break;
   }
 }

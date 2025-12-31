@@ -14,7 +14,7 @@
 #include "helpers.hpp"
 
 // Bridge declared in jit_bridge.cpp
-extern "C" auto VDLISP__call_from_jit(void*, double*, int) -> double;
+extern "C" auto VDLISP__call_from_jit(void*, double*, int) noexcept -> double;
 
 JITCompiler::JITCompiler() {
     llvm::InitializeNativeTarget();
@@ -35,7 +35,7 @@ JITCompiler::JITCompiler() {
     }
 }
 
-JITCompiler::~JITCompiler() = default;
+JITCompiler::~JITCompiler() noexcept = default;
 
 // Concrete global JIT instance used by the runtime
 JITCompiler global_jit;
@@ -77,7 +77,7 @@ void JITCompiler::releaseFunctionCode(void* fnPtr) {
     }
 }
 
-auto JITCompiler::getContext() -> llvm::LLVMContext& {
+auto JITCompiler::getContext() noexcept -> llvm::LLVMContext& {
     return context;
 }
 

@@ -19,10 +19,10 @@
 class JITCompiler {
 public:
     JITCompiler();
-    ~JITCompiler();
+    ~JITCompiler() noexcept;
 
     auto compileFunctionFromBuilder(const std::function<llvm::Function*(llvm::Module&)>& builder) -> void*;
-    auto getContext() -> llvm::LLVMContext&;
+    auto getContext() noexcept -> llvm::LLVMContext&;
     auto compileFuncData(vdlisp::FuncData* func) -> void*;
     void releaseFunctionCode(void* fnPtr);
 
@@ -35,7 +35,7 @@ private:
 // Global shared JIT instance used by the runtime; tests may rely on this being
 // available to trigger compilation consistently.
 
-extern "C" inline auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, int argc) -> double {
+extern "C" inline auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, int argc) noexcept -> double {
     try {
         vdlisp::State* S = vdlisp::jit_active_state;
         if (!S) return std::numeric_limits<double>::quiet_NaN();
