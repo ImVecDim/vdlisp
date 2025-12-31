@@ -312,7 +312,7 @@ void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std
 // Move previously-inline helper implementations here
 namespace vdlisp {
 
-auto value_equal(Value a, Value b) -> bool
+auto value_equal(const Value &a, const Value &b) -> bool
 {
   if (a == b) return true;
   if (!a || !b) return false;

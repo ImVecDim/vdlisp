@@ -82,13 +82,13 @@ auto JITCompiler::getContext() noexcept -> llvm::LLVMContext& {
 }
 
 // helper: scan an AST and collect TFUNC pointers referenced by symbol calls
-static void collect_called_funcs(vdlisp::Value expr, std::vector<vdlisp::FuncData*> &out, vdlisp::Env *closure) {
+static void collect_called_funcs(const vdlisp::Value &expr, std::vector<vdlisp::FuncData*> &out, vdlisp::Env *closure) {
     using namespace vdlisp;
     if (!expr) return;
     if (expr.get_type() == TPAIR) {
         vdlisp::PairData *pd = expr.get_pair();
-        Value car = pd->car;
-        Value cdr = pd->cdr;
+        const Value &car = pd->car;
+        const Value &cdr = pd->cdr;
         if (car && car.get_type() == TSYMBOL) {
             std::string name = *car.get_symbol();
             Env *e = closure;
@@ -109,10 +109,11 @@ static void collect_called_funcs(vdlisp::Value expr, std::vector<vdlisp::FuncDat
             }
             if (e) release_env(e);
         }
-        Value walk = expr;
-        while (walk) {
-            collect_called_funcs(pair_car(walk), out, closure);
-            walk = pair_cdr(walk);
+        const Value *walk = &expr;
+        while (*walk) {
+            PairData *wpd = walk->get_pair();
+            collect_called_funcs(wpd->car, out, closure);
+            walk = &wpd->cdr;
         }
     }
 }

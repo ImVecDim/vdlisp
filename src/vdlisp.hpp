@@ -46,9 +46,9 @@ namespace vdlisp
     // parsing / eval
     auto parse(const std::string &src, const std::string &name = "(string)") -> Value;
     auto parse_all(const std::string &src, const std::string &name = "(string)") -> Value;
-    auto eval(Value expr, Env *env) -> Value;
-    auto call(Value fn, Value args, Env *env = nullptr) -> Value;
-    auto do_list(Value body, Env *env) -> Value;
+    auto eval(const Value &expr, Env *env) -> Value;
+    auto call(const Value &fn, const Value &args, Env *env = nullptr) -> Value;
+    auto do_list(const Value &body, Env *env) -> Value;
 
     // source location helpers
     struct SourceLoc { std::string file; size_t line = 0; size_t col = 0; std::string label; };
@@ -82,13 +82,13 @@ namespace vdlisp
 
   public:
     // helpers
-    auto to_string(Value v) -> std::string;
+    auto to_string(const Value &v) -> std::string;
     void register_builtin(const std::string &name, const CFunc &fn);
     void register_prim(const std::string &name, const Prim &fn);
     auto get_bound(const std::string &name, Env *env) -> Value;
     void bind_global(const std::string &name, Value v);
-    auto bind(Value sym, Value v, Env *env) -> Value;
-    auto set(Value sym, Value v, Env *env) -> Value;
+    auto bind(const Value &sym, Value v, Env *env) -> Value;
+    auto set(const Value &sym, Value v, Env *env) -> Value;
 
 
   };

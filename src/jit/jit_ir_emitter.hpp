@@ -9,15 +9,15 @@
 #include <unordered_map>
 #include <functional>
 
-namespace vdlisp { class FuncData; class Value; class PairData; using Value = Value; }
+namespace vdlisp { class FuncData; class Value; class PairData; }
 
 class JITIREmitter {
 public:
     JITIREmitter(vdlisp::FuncData* func, llvm::Function* F, llvm::LLVMContext &context);
-    auto emitExpr(vdlisp::Value expr) -> llvm::Value*;
-    auto compileCond(vdlisp::Value clauses) -> llvm::Value*;
-    auto compileWhile(vdlisp::Value rest) -> llvm::Value*;
-    auto compileLet(vdlisp::Value rest) -> llvm::Value*;
+    auto emitExpr(const vdlisp::Value &expr) -> llvm::Value*;
+    auto compileCond(const vdlisp::Value &clauses) -> llvm::Value*;
+    auto compileWhile(const vdlisp::Value &rest) -> llvm::Value*;
+    auto compileLet(const vdlisp::Value &rest) -> llvm::Value*;
     auto finalize() -> llvm::Function*;
 
 private:

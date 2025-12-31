@@ -202,7 +202,7 @@ auto State::make_symbol(const std::string &s) -> Value
 auto State::make_pair(Value car, Value cdr) -> Value
 {
   Value v = make_pooled_value(TPAIR);
-  v.set_pair(alloc_pair(car, cdr));
+  v.set_pair(alloc_pair(std::move(car), std::move(cdr)));
   return v;
 }
 auto State::make_cfunc(const CFunc &fn) -> Value
@@ -220,13 +220,13 @@ auto State::make_prim(const Prim &fn) -> Value
 auto State::make_function(Value params, Value body, Env *env) -> Value
 {
   Value v = make_pooled_value(TFUNC);
-  v.set_func(alloc_func(params, body, env));
+  v.set_func(alloc_func(std::move(params), std::move(body), env));
   return v;
 }
 auto State::make_macro(Value params, Value body, Env *env) -> Value
 {
   Value v = make_pooled_value(TMACRO);
-  v.set_macro(alloc_macro(params, body, env));
+  v.set_macro(alloc_macro(std::move(params), std::move(body), env));
   return v;
 }
 
@@ -259,7 +259,7 @@ void State::register_prim(const std::string &name, const Prim &fn)
   bind_global(name, make_prim(fn));
 }
 
-auto State::bind(Value sym, Value v, Env *env) -> Value
+auto State::bind(const Value &sym, Value v, Env *env) -> Value
 {
   if (!env)
     env = global;
@@ -270,7 +270,7 @@ auto State::bind(Value sym, Value v, Env *env) -> Value
   return v;
 }
 
-auto State::set(Value sym, Value v, Env *env) -> Value
+auto State::set(const Value &sym, Value v, Env *env) -> Value
 {
   if (!env)
     env = global;
@@ -321,64 +321,73 @@ auto State::get_bound(const std::string &name, Env *env) -> Value
 // -------------------- eval --------------------
 
 // Evaluate each element of a list and return a new list of evaluated values
-static auto eval_args(State &S, Value list, Env *env) -> Value
+static auto eval_args(State &S, const Value &list, Env *env) -> Value
 {
   Value head;
   Value *last = &head;
-  Value a = list;
-  while (a)
+  const Value *a = &list;
+  while (*a)
   {
-    Value acar = pair_car(a);
-    Value acdr = pair_cdr(a);
+    PairData *apd = a->get_pair();
+    const Value &acar = apd->car;
+    const Value &acdr = apd->cdr;
     Value av = S.eval(acar, env);
     *last = S.make_pair(av, Value());
     PairData *lpd = (*last).get_pair();
     last = &lpd->cdr;
-    a = acdr;
+    a = &acdr;
   }
   return head;
 }
 
 static void bind_params_to_env(
     std::unordered_map<std::string, Value> &out,
-    Value params,
-    Value args,
+    const Value &params,
+    const Value &args,
     bool fill_missing_with_nil)
 {
-  Value p = params;
-  Value a = args;
-  while (p)
+  const Value *p = &params;
+  const Value *a = &args;
+  while (*p)
   {
-    if (p && p.get_type() == TSYMBOL) {
+    if (p->get_type() == TSYMBOL) {
       // if params is a bare symbol, bind the rest of args to it
-      out[*p.get_symbol()] = a;
+      out[*p->get_symbol()] = *a;
       break;
     }
 
-    if (!fill_missing_with_nil && !a)
+    if (!fill_missing_with_nil && !*a)
       break;
 
-    Value pcar = pair_car(p);
-    Value pcdr = pair_cdr(p);
+    PairData *ppd = p->get_pair();
+    const Value &pcar = ppd->car;
+    const Value &pcdr = ppd->cdr;
 
     if (pcar && pcar.get_type() == TSYMBOL)
     {
-      Value bound = a ? pair_car(a) : Value();
+      Value bound;
+      if (*a) {
+        PairData *apd = a->get_pair();
+        bound = apd->car;
+      }
       out[*pcar.get_symbol()] = bound;
     }
 
-    p = pcdr;
-    a = a ? pair_cdr(a) : Value();
+    p = &pcdr;
+    if (*a) {
+      PairData *apd = a->get_pair();
+      a = &apd->cdr;
+    }
   }
 }
 
-auto State::eval(Value expr, Env *env) -> Value
+auto State::eval(const Value &expr, Env *env) -> Value
 {
   // Keep track of current expression. On exception we leave current_expr set to the
   // failing expression so the top-level can report a source location.
   class EvalContext {
   public:
-    EvalContext(State &S, Value expr) : S(S), prev(S.current_expr) { S.current_expr = expr; }
+    EvalContext(State &S, const Value &expr) : S(S), prev(S.current_expr) { S.current_expr = expr; }
     void commit() { commit_flag = true; }
     ~EvalContext() { if (commit_flag) S.current_expr = prev; }
 
@@ -422,8 +431,8 @@ auto State::eval(Value expr, Env *env) -> Value
   {
     // function application or special form
     PairData *pd = expr.get_pair();
-    Value car = pd->car;
-    Value cdr = pd->cdr;
+    const Value &car = pd->car;
+    const Value &cdr = pd->cdr;
     Value fn_expr = car;
     Value fn = eval(fn_expr, env);
     if (!fn)
@@ -486,8 +495,8 @@ auto State::eval(Value expr, Env *env) -> Value
       // annotate expanded nodes: set source loc to call site and attach
       // the call-chain (prepending to any existing chain from inner macros)
       if (res && have_call_loc) {
-        std::function<void(Value)> propagate;
-        propagate = [&](Value v) -> void {
+        std::function<void(const Value&)> propagate;
+        propagate = [&](const Value &v) -> void {
           if (!v) return;
           set_source_loc(v, call_loc.file, call_loc.line, call_loc.col);
           auto it = src_call_chain_map.find(v.identity_key());
@@ -519,7 +528,7 @@ auto State::eval(Value expr, Env *env) -> Value
   }
 }
 
-auto State::call(Value fn, Value args, Env *env) -> Value
+auto State::call(const Value &fn, const Value &args, Env *env) -> Value
 {
   (void)env;
   if (!fn)
@@ -535,13 +544,14 @@ auto State::call(Value fn, Value args, Env *env) -> Value
     FuncData *fd = fn.get_func();
     // Check if arguments are all numeric
     std::vector<double> darr;
-    Value a = args;
+    const Value *a = &args;
     bool numeric = true;
-    while (a) {
-      Value av = pair_car(a);
+    while (*a) {
+      PairData *apd = a->get_pair();
+      const Value &av = apd->car;
       if (!av || av.get_type() != TNUMBER) { numeric = false; break; }
       darr.push_back(av.get_number());
-      a = pair_cdr(a);
+      a = &apd->cdr;
     }
 
     if (numeric) {
@@ -625,21 +635,22 @@ auto State::call(Value fn, Value args, Env *env) -> Value
   throw std::runtime_error("not a function");
 }
 
-auto State::do_list(Value body, Env *env) -> Value
+auto State::do_list(const Value &body, Env *env) -> Value
 {
+  const Value *walk = &body;
   Value res;
-  while (body)
+  while (*walk)
   {
-    PairData *pd = body.get_pair();
-    Value car = pd->car;
-    Value cdr = pd->cdr;
+    PairData *pd = walk->get_pair();
+    const Value &car = pd->car;
+    const Value &cdr = pd->cdr;
     res = eval(car, env);
-    body = cdr;
+    walk = &cdr;
   }
   return res;
 }
 
-auto State::to_string(Value v) -> std::string
+auto State::to_string(const Value &v) -> std::string
 {
   if (!v) return "nil";
   return v.to_repr(*this);

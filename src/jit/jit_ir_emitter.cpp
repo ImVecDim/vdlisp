@@ -39,7 +39,7 @@ auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst*
     return a;
 }
 
-auto JITIREmitter::compileCond(vdlisp::Value clauses) -> llvm::Value*
+auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value*
 {
     if (!clauses) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     std::vector<BasicBlock*> testBBs;
@@ -104,7 +104,7 @@ auto JITIREmitter::compileCond(vdlisp::Value clauses) -> llvm::Value*
     }
     return phi;
 }
-auto JITIREmitter::compileWhile(vdlisp::Value rest) -> llvm::Value*
+auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value*
 {
     vdlisp::Value cond = pair_car(rest);
     vdlisp::Value body = rest.get_pair()->cdr;
@@ -138,7 +138,7 @@ auto JITIREmitter::compileWhile(vdlisp::Value rest) -> llvm::Value*
     return last;
 }
 
-auto JITIREmitter::compileLet(vdlisp::Value rest) -> llvm::Value*
+auto JITIREmitter::compileLet(const vdlisp::Value &rest) -> llvm::Value*
 {
     vdlisp::Value bindings = pair_car(rest);
     vdlisp::Value letbody = rest.get_pair()->cdr;
@@ -181,7 +181,7 @@ auto JITIREmitter::compileLet(vdlisp::Value rest) -> llvm::Value*
     if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     return last;
 }
-auto JITIREmitter::emitExpr(vdlisp::Value expr) -> llvm::Value*
+auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value*
 {
     if (!expr) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     if (expr.get_type() == vdlisp::TNUMBER) {
