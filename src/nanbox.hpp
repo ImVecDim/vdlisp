@@ -35,8 +35,7 @@ namespace vdlisp
     TFUNC,  // user function
     TMACRO, // macro
     TPRIM,  // special form (unevaluated args)
-    TCFUNC, // c++ builtin
-    TENV
+    TCFUNC // c++ builtin
   };
 
   // Forward declarations needed for the implementation
@@ -264,8 +263,7 @@ namespace vdlisp
       /*TFUNC*/ true,
       /*TMACRO*/ true,
       /*TPRIM*/ false,
-      /*TCFUNC*/ false,
-      /*TENV*/ true
+      /*TCFUNC*/ false
     };
     size_t idx = static_cast<size_t>(t);
     return idx < (sizeof(kIsRefcounted)/sizeof(kIsRefcounted[0])) ? kIsRefcounted[idx] : false;

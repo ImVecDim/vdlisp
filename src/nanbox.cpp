@@ -152,9 +152,6 @@ void Value::release_payload(Type t, void* p) noexcept
     case TMACRO:
       delete static_cast<MacroData*>(p);
       break;
-    case TENV:
-      delete static_cast<Env*>(p);
-      break;
     default:
       break;
   }
@@ -177,7 +174,6 @@ auto Value::type_name() const -> std::string
     case TMACRO: return "macro";
     case TPRIM: return "prim";
     case TCFUNC: return "cfunction";
-    case TENV: return "env";
     default: return "?";
   }
 }
@@ -221,8 +217,6 @@ auto Value::to_repr(State &S) const -> std::string
       return "<macro>";
     case TPRIM:
       return "<prim>";
-    case TENV:
-      return "<env>";
     case TFUNC: {
       auto* fd = reinterpret_cast<FuncData*>(bits & kPayloadMask);
       return (fd && fd->compiled_code) ? "<jit_func>" : "<function>";
