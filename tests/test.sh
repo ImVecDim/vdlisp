@@ -50,6 +50,9 @@ TESTS=(
   # Equality / identity
   '(< 1 2)' '#t'
   '(> 3 2)' '#t'
+  '(< 1 2 3)' 'err:< requires exactly two arguments'
+  '(> 3 2 1)' 'err:> requires exactly two arguments'
+  '(= 1 1 1)' 'err:= requires exactly two arguments'
 
   # apply / higher-order
   '(apply + (list 1 2))' '3'

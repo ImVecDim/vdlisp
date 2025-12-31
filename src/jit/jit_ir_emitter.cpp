@@ -259,7 +259,7 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value*
         }
 
         if (opname == "<" || opname == ">" || opname == "<=" || opname == ">=" || opname == "=") {
-            if (vals.size() < 2) return nullptr;
+            if (vals.size() != 2) return nullptr;
             llvm::Value *L = vals[0];
             llvm::Value *R = vals[1];
             llvm::Value *cmp = nullptr;

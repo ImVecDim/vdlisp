@@ -26,25 +26,17 @@ static auto arith_binary(
   return S.make_number(op(a, b));
 }
 
-static auto compare_chain(
+static auto compare_binary(
   State &S,
   Value args,
   bool (*cmp)(double, double),
   const char *name) -> Value
 {
-  if (!args)
-    throw std::runtime_error(std::string(name) + " needs arguments");
+  if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
+    throw std::runtime_error(std::string(name) + " requires exactly two arguments");
   double a = require_number(pair_car(args), name);
-  Value cur = pair_cdr(args);
-  while (cur)
-  {
-    double b = require_number(pair_car(cur), name);
-    if (!cmp(a, b))
-      return {};
-    a = b;
-    cur = pair_cdr(cur);
-  }
-  return S.get_bound("#t", S.global);
+  double b = require_number(pair_car(pair_cdr(args)), name);
+  return cmp(a, b) ? S.get_bound("#t", S.global) : Value();
 }
 
 void register_core(State &S)
@@ -93,22 +85,22 @@ void register_core(State &S)
   });
 
   S.register_builtin("<", [](State &S, Value args) -> Value {
-    return compare_chain(S, args,
+    return compare_binary(S, args,
               [](double a, double b) -> bool { return a < b; },
               "<");
   });
   S.register_builtin(">", [](State &S, Value args) -> Value {
-    return compare_chain(S, args,
+    return compare_binary(S, args,
               [](double a, double b) -> bool { return a > b; },
               ">");
   });
   S.register_builtin("<=", [](State &S, Value args) -> Value {
-    return compare_chain(S, args,
+    return compare_binary(S, args,
               [](double a, double b) -> bool { return a <= b; },
               "<=");
   });
   S.register_builtin(">=", [](State &S, Value args) -> Value {
-    return compare_chain(S, args,
+    return compare_binary(S, args,
               [](double a, double b) -> bool { return a >= b; },
               ">=");
   });
@@ -169,6 +161,8 @@ void register_core(State &S)
   });
 
   S.register_builtin("=", [](State &S, Value args) -> Value {
+    if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
+      throw std::runtime_error("= requires exactly two arguments");
     Value a = pair_car(args);
     Value b = pair_car(pair_cdr(args));
     return value_equal(a, b) ? S.get_bound("#t", S.global) : Value();
