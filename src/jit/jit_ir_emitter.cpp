@@ -188,6 +188,12 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value*
         return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), expr.get_number());
     }
     if (expr.get_type() == vdlisp::TSYMBOL) {
+        // Builtin truthy literal: in the interpreter '#t' is a globally-bound symbol
+        // (non-nil), but for the JIT's numeric representation we treat it as 1.0.
+        // This avoids an environment lookup and allows cond/while default branches.
+        if (*expr.get_symbol() == "#t") {
+            return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 1.0);
+        }
         auto it = param_index.find(*expr.get_symbol());
         if (it != param_index.end()) {
             int i = it->second;
