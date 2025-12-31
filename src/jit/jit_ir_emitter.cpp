@@ -206,7 +206,23 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value*
         if (lit != locals.end()) {
             return ir.CreateLoad(llvm::Type::getDoubleTy(context), lit->second);
         }
-        return nullptr;
+
+        // Free variable: try runtime lookup from closure env chain.
+        // Returns NaN if unbound or non-numeric; the caller will then fall back.
+        llvm::Module *M = F->getParent();
+        llvm::Type *dblTy = llvm::Type::getDoubleTy(context);
+        llvm::Type *i8ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context));
+        llvm::FunctionType *ft = llvm::FunctionType::get(dblTy, {i8ptr, i8ptr}, false);
+        llvm::FunctionCallee callee = M->getOrInsertFunction("VDLISP__jit_lookup_number", ft);
+
+        auto env_ptr_ty = i8ptr;
+        auto env_bits_ty = llvm::Type::getInt64Ty(context);
+        uintptr_t env_addr = reinterpret_cast<uintptr_t>(func && func->closure_env ? func->closure_env : nullptr);
+        llvm::Constant *env_int = llvm::ConstantInt::get(env_bits_ty, static_cast<uint64_t>(env_addr));
+        llvm::Constant *env_ptr = llvm::ConstantExpr::getIntToPtr(env_int, env_ptr_ty);
+
+        llvm::Value *name_ptr = ir.CreateGlobalStringPtr(*expr.get_symbol());
+        return ir.CreateCall(callee, {env_ptr, name_ptr});
     }
     if (expr.get_type() == vdlisp::TPAIR) {
         vdlisp::PairData *pd = expr.get_pair();

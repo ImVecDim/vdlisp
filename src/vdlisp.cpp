@@ -578,17 +578,23 @@ auto State::call(const Value &fn, const Value &args, Env *env) -> Value
         // interpreter when necessary.
         jit_active_state = this;
         double res = 0.0;
+        bool jit_threw = false;
         try {
           res = fptr(darr.empty() ? nullptr : darr.data(), (int)darr.size());
         } catch (...) {
+          jit_threw = true;
           res = std::numeric_limits<double>::quiet_NaN();
         }
         jit_active_state = nullptr;
         if (std::isnan(res)) {
-            // callee returned a non-number — disable compiled code and
-            // fallback to interpreter implementation for correctness.
-            fd->compiled_code = nullptr;
-            fd->jit_failed = true;
+            // Deopt: callee returned a non-number (signaled as NaN).
+            // This can happen transiently (e.g. a free variable becomes non-numeric).
+            // Fall back to the interpreter for this call, but do not permanently
+            // disable JIT unless the compiled code itself threw.
+            if (jit_threw) {
+              fd->compiled_code = nullptr;
+              fd->jit_failed = true;
+            }
             Value params = fd->params;
             Value body = fd->body;
             Env *closure_env = fd->closure_env;

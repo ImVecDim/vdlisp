@@ -115,6 +115,9 @@ TESTS=(
   $'(set f (fn (x) (+ x 1)))\n(f 1)\n(f 2)\n(f 3)\n(f 4)\n(f 5)\n(type f)' 'jit_func'
   $'(set f (fn (x) (+ x 1)))\n(f 1)\n(f 2)\n(f 3)\n(f 4)\n(f 5)\n(print f)' '<jit_func>'
 
+  # JIT with external numeric variable (free var lookup)
+  $'(set y 10)\n(set f (fn (x) (+ x y)))\n(f 1)\n(f 1)\n(f 1)\n(f 1)\n(f 1)\n(type f)' 'jit_func'
+
   # Error cases
   '(parse 1)' 'err:parse requires a string'
   '(apply)' 'err:apply requires a function'

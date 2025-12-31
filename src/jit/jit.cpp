@@ -55,6 +55,11 @@ auto JITCompiler::compileFunctionFromBuilder(const std::function<llvm::Function*
         executionEngine->addGlobalMapping(bridge, reinterpret_cast<void*>(VDLISP__call_from_jit));
     }
 
+    // Map helper(s) used by JITed code.
+    if (llvm::Function *lookup = mptr->getFunction("VDLISP__jit_lookup_number")) {
+        executionEngine->addGlobalMapping(lookup, reinterpret_cast<void*>(VDLISP__jit_lookup_number));
+    }
+
     executionEngine->addModule(std::move(m));
     executionEngine->finalizeObject();
     void* ptr = executionEngine->getPointerToFunction(f);

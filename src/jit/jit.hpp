@@ -15,6 +15,7 @@
 #include "vdlisp.hpp"
 #include <unordered_map>
 #include <limits>
+#include <string>
 
 class JITCompiler {
 public:
@@ -54,6 +55,36 @@ extern "C" inline auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, i
         vdlisp::Value res = S->call(fptr, head, nullptr);
         if (!res || res.get_type() != vdlisp::TNUMBER) return std::numeric_limits<double>::quiet_NaN();
         return res.get_number();
+    } catch (...) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+}
+
+// Lookup a free variable by name in a closure environment chain and return its
+// numeric value. Returns NaN if unbound or non-numeric.
+//
+// This is intentionally narrow: JIT currently operates on the numeric fast-path
+// (double in/out). Supporting arbitrary types would require a Value/NaN-box ABI.
+extern "C" inline auto VDLISP__jit_lookup_number(void* env_ptr, const char* name) noexcept -> double {
+    try {
+        if (!name) return std::numeric_limits<double>::quiet_NaN();
+        vdlisp::Env* e = reinterpret_cast<vdlisp::Env*>(env_ptr);
+        // If no closure env was captured, fall back to the currently-active state.
+        if (!e) {
+            vdlisp::State* S = vdlisp::jit_active_state;
+            if (S) e = S->global;
+        }
+        if (!e) return std::numeric_limits<double>::quiet_NaN();
+
+        const std::string key{name};
+        for (vdlisp::Env* cur = e; cur; cur = cur->parent) {
+            auto it = cur->map.find(key);
+            if (it == cur->map.end()) continue;
+            const vdlisp::Value &v = it->second;
+            if (!v || v.get_type() != vdlisp::TNUMBER) return std::numeric_limits<double>::quiet_NaN();
+            return v.get_number();
+        }
+        return std::numeric_limits<double>::quiet_NaN();
     } catch (...) {
         return std::numeric_limits<double>::quiet_NaN();
     }
