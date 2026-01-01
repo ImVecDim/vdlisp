@@ -15,7 +15,7 @@ namespace vdlisp
 
 static auto arith_binary(
   State &S,
-  Value args,
+  const Value &args,
   double (*op)(double, double),
   const char *name) -> Value
 {
@@ -28,7 +28,7 @@ static auto arith_binary(
 
 static auto compare_binary(
   State &S,
-  Value args,
+  const Value &args,
   bool (*cmp)(double, double),
   const char *name) -> Value
 {
@@ -42,39 +42,40 @@ static auto compare_binary(
 void register_core(State &S)
 {
   // --- builtins ---
-  S.register_builtin("print", [](State &S, Value args) -> Value {
+  S.register_builtin("print", [](State &S, const Value &args) -> Value {
     Value last = Value();
     bool first = true;
-    while (args)
+    Value cur = args;
+    while (cur)
     {
       if (!first)
         std::cout << ' ';
-      Value el = pair_car(args);
+      Value el = pair_car(cur);
       std::cout << S.to_string(el);
       first = false;
       last = el;
-      args = pair_cdr(args);
+      cur = pair_cdr(cur);
     }
     std::cout << '\n';
     return last;
   });
 
-  S.register_builtin("+", [](State &S, Value args) -> Value {
+  S.register_builtin("+", [](State &S, const Value &args) -> Value {
     return arith_binary(S, args,
              [](double a, double b) -> double { return a + b; },
              "+");
   });
-  S.register_builtin("-", [](State &S, Value args) -> Value {
+  S.register_builtin("-", [](State &S, const Value &args) -> Value {
     return arith_binary(S, args,
              [](double a, double b) -> double { return a - b; },
              "-");
   });
-  S.register_builtin("*", [](State &S, Value args) -> Value {
+  S.register_builtin("*", [](State &S, const Value &args) -> Value {
     return arith_binary(S, args,
              [](double a, double b) -> double { return a * b; },
              "*");
   });
-  S.register_builtin("/", [](State &S, Value args) -> Value {
+  S.register_builtin("/", [](State &S, const Value &args) -> Value {
     return arith_binary(S, args,
              [](double a, double b) -> double {
                if (b == 0.0)
@@ -84,50 +85,50 @@ void register_core(State &S)
              "/");
   });
 
-  S.register_builtin("<", [](State &S, Value args) -> Value {
+  S.register_builtin("<", [](State &S, const Value &args) -> Value {
     return compare_binary(S, args,
               [](double a, double b) -> bool { return a < b; },
               "<");
   });
-  S.register_builtin(">", [](State &S, Value args) -> Value {
+  S.register_builtin(">", [](State &S, const Value &args) -> Value {
     return compare_binary(S, args,
               [](double a, double b) -> bool { return a > b; },
               ">");
   });
-  S.register_builtin("<=", [](State &S, Value args) -> Value {
+  S.register_builtin("<=", [](State &S, const Value &args) -> Value {
     return compare_binary(S, args,
               [](double a, double b) -> bool { return a <= b; },
               "<=");
   });
-  S.register_builtin(">=", [](State &S, Value args) -> Value {
+  S.register_builtin(">=", [](State &S, const Value &args) -> Value {
     return compare_binary(S, args,
               [](double a, double b) -> bool { return a >= b; },
               ">=");
   });
-  S.register_builtin("list", [](State &, Value args) -> Value {
+  S.register_builtin("list", [](State &, const Value &args) -> Value {
     return args;
   });
-  S.register_builtin("type", [](State &S, Value args) -> Value {
+  S.register_builtin("type", [](State &S, const Value &args) -> Value {
     Value v = pair_car(args);
     return S.make_symbol(type_name(v));
   });
-  S.register_builtin("parse", [](State &S, Value args) -> Value {
+  S.register_builtin("parse", [](State &S, const Value &args) -> Value {
     if (!args || !pair_car(args) || pair_car(args).get_type() != TSTRING)
       throw std::runtime_error("parse requires a string");
     return S.parse(*pair_car(args).get_string());
   });
-  S.register_builtin("error", [](State &S, Value args) -> Value {
+  S.register_builtin("error", [](State &S, const Value &args) -> Value {
     std::string msg = pair_car(args) ? S.to_string(pair_car(args)) : std::string("error");
     throw std::runtime_error(msg);
     return {};
   });
 
-  S.register_builtin("cons", [](State &S, Value args) -> Value {
+  S.register_builtin("cons", [](State &S, const Value &args) -> Value {
     Value a = pair_car(args);
     Value b = pair_car(pair_cdr(args));
     return S.make_pair(a, b);
   });
-  S.register_builtin("car", [](State &, Value args) -> Value {
+  S.register_builtin("car", [](State &, const Value &args) -> Value {
     Value v = pair_car(args);
     if (!v)
       return {};
@@ -135,7 +136,7 @@ void register_core(State &S)
       throw std::runtime_error("car expects a pair");
     return pair_car(v);
   });
-  S.register_builtin("cdr", [](State &, Value args) -> Value {
+  S.register_builtin("cdr", [](State &, const Value &args) -> Value {
     Value v = pair_car(args);
     if (!v)
       return {};
@@ -143,7 +144,7 @@ void register_core(State &S)
       throw std::runtime_error("cdr expects a pair");
     return pair_cdr(v);
   });
-  S.register_builtin("setcar", [](State &, Value args) -> Value {
+  S.register_builtin("setcar", [](State &, const Value &args) -> Value {
     Value p = pair_car(args);
     Value v = pair_car(pair_cdr(args));
     if (!p || p.get_type() != TPAIR)
@@ -151,7 +152,7 @@ void register_core(State &S)
     pair_set_car(p, v);
     return v;
   });
-  S.register_builtin("setcdr", [](State &, Value args) -> Value {
+  S.register_builtin("setcdr", [](State &, const Value &args) -> Value {
     Value p = pair_car(args);
     Value v = pair_car(pair_cdr(args));
     if (!p || p.get_type() != TPAIR)
@@ -160,7 +161,7 @@ void register_core(State &S)
     return v;
   });
 
-  S.register_builtin("=", [](State &S, Value args) -> Value {
+  S.register_builtin("=", [](State &S, const Value &args) -> Value {
     if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
       throw std::runtime_error("= requires exactly two arguments");
     Value a = pair_car(args);
@@ -168,7 +169,7 @@ void register_core(State &S)
     return value_equal(a, b) ? S.get_bound("#t", S.global) : Value();
   });
 
-  S.register_builtin("exit", [](State &S, Value args) -> Value {
+  S.register_builtin("exit", [](State &S, const Value &args) -> Value {
     int code = 0;
     if (pair_car(args))
       code = (int)require_number(pair_car(args), "exit");
@@ -182,14 +183,14 @@ void register_core(State &S)
   register_require(S);
 
   // --- prims ---
-  S.register_prim("quote", [](State &, Value args, Env *) -> Value {
+  S.register_prim("quote", [](State &, const Value &args, Env *) -> Value {
     return pair_car(args);
   });
-  S.register_prim("unquote", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("unquote", [](State &S, const Value &args, Env *env) -> Value {
     return pair_car(args) ? S.eval(pair_car(args), env) : Value();
   });
-  S.register_prim("quasiquote", [](State &S, Value args, Env *env) -> Value {
-    std::function<Value(Value, int)> qq_expand = [&](Value expr, int depth) -> Value {
+  S.register_prim("quasiquote", [](State &S, const Value &args, Env *env) -> Value {
+    std::function<Value(const Value&, int)> qq_expand = [&](const Value &expr, int depth) -> Value {
       if (!expr)
         return {};
       if (is_pair(expr))
@@ -219,23 +220,23 @@ void register_core(State &S)
     return qq_expand(pair_car(args), 1);
   });
   // `if` removed as a primitive; provide it via a macro implemented using `cond`.
-  S.register_prim("set", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("set", [](State &S, const Value &args, Env *env) -> Value {
     Value sym = pair_car(args);
     Value valexpr = pair_car(pair_cdr(args));
     Value val = S.eval(valexpr, env);
     return S.set(sym, val, env);
   });
-  S.register_prim("fn", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("fn", [](State &S, const Value &args, Env *env) -> Value {
     Value params = pair_car(args);
     Value body = pair_cdr(args);
     return S.make_function(params, body, env);
   });
-  S.register_prim("macro", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("macro", [](State &S, const Value &args, Env *env) -> Value {
     Value params = pair_car(args);
     Value body = pair_cdr(args);
     return S.make_macro(params, body, env);
   });
-  S.register_prim("let", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("let", [](State &S, const Value &args, Env *env) -> Value {
     Value vars = pair_car(args);
     Env *e = S.make_env(env);
     EnvGuard eg(e);
@@ -250,7 +251,7 @@ void register_core(State &S)
     }
     return S.do_list(pair_cdr(args), e);
   });
-  S.register_prim("while", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("while", [](State &S, const Value &args, Env *env) -> Value {
     Value cond = pair_car(args);
     Value body = pair_cdr(args);
     Value res;
@@ -263,7 +264,7 @@ void register_core(State &S)
   // cond special form: evaluate clauses sequentially; for the first true
   // test evaluate and return the body. Implemented directly to avoid
   // depending on `if` (which may be provided at the language level as a macro).
-  S.register_prim("cond", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("cond", [](State &S, const Value &args, Env *env) -> Value {
     Value clauses = args;
     while (clauses) {
       Value clause = pair_car(clauses);
@@ -281,7 +282,7 @@ void register_core(State &S)
   // Provide `if` as a language-level macro implemented via `cond`.
   // This creates a proper TMACRO binding in the global environment so user
   // scripts can rely on `if` even though it's not a primitive.
-  S.register_prim("apply", [](State &S, Value args, Env *env) -> Value {
+  S.register_prim("apply", [](State &S, const Value &args, Env *env) -> Value {
     Value fnexpr = pair_car(args);
     if (!fnexpr)
       throw std::runtime_error("apply requires a function");

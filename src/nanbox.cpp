@@ -74,6 +74,9 @@ Value::~Value() {
 auto Value::operator=(const Value &other) -> Value&
 {
   if (this == &other) return *this;
+  // If both Values already contain the same bits (same payload/tag),
+  // there's no need to change reference counts or modify state.
+  if (bits == other.bits) return *this;
   other.retain();
   release();
   bits = other.bits;

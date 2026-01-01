@@ -22,8 +22,8 @@ namespace vdlisp
 
   // Use plain function pointer types for primitives and C functions to avoid
   // the overhead of std::function (allocations / type-erasure / indirect calls).
-  using Prim = Value (*)(State &, Value, Env*);
-  using CFunc = Value (*)(State &, Value);
+  using Prim = Value (*)(State &, const Value&, Env*);
+  using CFunc = Value (*)(State &, const Value&);
 
   enum Type
   {

@@ -52,8 +52,8 @@ namespace vdlisp
 
     // source location helpers
     struct SourceLoc { std::string file; size_t line = 0; size_t col = 0; std::string label; };
-    void set_source_loc(Value v, const std::string &file, size_t line, size_t col);
-    auto get_source_loc(Value v, SourceLoc &out) const -> bool;
+    void set_source_loc(const Value &v, const std::string &file, size_t line, size_t col);
+    auto get_source_loc(const Value &v, SourceLoc &out) const -> bool;
 
     // current expression being evaluated (set while evaluating; left set on exception)
     Value current_expr;

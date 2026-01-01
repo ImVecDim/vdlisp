@@ -228,7 +228,7 @@ auto list_of(State &S, std::initializer_list<Value> items) -> Value
   return head;
 }
 
-void State::set_source_loc(Value v, const std::string &file, size_t line, size_t col)
+void State::set_source_loc(const Value &v, const std::string &file, size_t line, size_t col)
 {
   if (!v)
     return;
@@ -239,7 +239,7 @@ void State::set_source_loc(Value v, const std::string &file, size_t line, size_t
   src_map[v.identity_key()] = loc;
 }
 
-auto State::get_source_loc(Value v, SourceLoc &out) const -> bool
+auto State::get_source_loc(const Value &v, SourceLoc &out) const -> bool
 {
   if (!v)
     return false;
