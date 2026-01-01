@@ -51,9 +51,9 @@ namespace vdlisp
   private:
     size_t refs_{1};
   public:
-    void inc_ref() noexcept { ++refs_; }
-    size_t dec_ref() noexcept { return --refs_; }
-    size_t ref_count() const noexcept { return refs_; }
+    inline __attribute__((always_inline)) void inc_ref() noexcept { ++refs_; }
+    inline __attribute__((always_inline)) size_t dec_ref() noexcept { return --refs_; }
+    inline __attribute__((always_inline)) size_t ref_count() const noexcept { return refs_; }
   };
 
   class StringData : public RcBase { public: explicit StringData(const std::string &s) : value(s) {} std::string value; };
@@ -67,8 +67,8 @@ namespace vdlisp
   };
 
   // Helpers to manage Env reference counts (centralized for clarity)
-  inline void retain_env(Env *e) noexcept { if (e) e->inc_ref(); }
-  inline void release_env(Env *e) noexcept { if (!e) return; if (e->dec_ref() == 0) delete e; }
+  inline __attribute__((always_inline)) void retain_env(Env *e) noexcept { if (e) e->inc_ref(); }
+  inline __attribute__((always_inline)) void release_env(Env *e) noexcept { if (!e) return; if (e->dec_ref() == 0) delete e; }
 
   // RAII guard that owns a temporary Env* reference and releases it on destruction.
   struct EnvGuard {
@@ -201,7 +201,7 @@ namespace vdlisp
     }
   }
 
-  inline auto Value::get_pair() const noexcept -> PairData* { return reinterpret_cast<PairData*>(bits & kPayloadMask); }
+  inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData* { return reinterpret_cast<PairData*>(bits & kPayloadMask); }
 
   inline void Value::set_pair(PairData* ptr) noexcept {
     uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
@@ -209,7 +209,7 @@ namespace vdlisp
     release(); bits = kTagPair | newp;
   }
 
-  inline auto Value::get_string() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
+  inline __attribute__((always_inline)) auto Value::get_string() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
 
   inline void Value::set_string(StringData* ptr) noexcept {
     uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
@@ -217,7 +217,7 @@ namespace vdlisp
     release(); bits = kTagString | newp;
   }
 
-  inline auto Value::get_symbol() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
+  inline __attribute__((always_inline)) auto Value::get_symbol() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
 
   inline void Value::set_symbol(StringData* ptr) noexcept {
     uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
@@ -259,13 +259,13 @@ namespace vdlisp
 
   inline void Value::set_cfunc(CFunc fn) noexcept { release(); uint64_t payload = 0; std::memcpy(&payload, &fn, sizeof(fn)); bits = kTagCFunc | (payload & kPayloadMask); }
 
-  inline void Value::retain() const noexcept {
+  inline __attribute__((always_inline)) void Value::retain() const noexcept {
     Type t = get_type();
     if (!is_refcounted(t)) return;
     retain_payload(t, payload_ptr());
   }
 
-  inline void Value::release() noexcept {
+  inline __attribute__((always_inline)) void Value::release() noexcept {
     Type t = get_type();
     if (!is_refcounted(t)) return;
     release_payload(t, payload_ptr());
@@ -290,7 +290,7 @@ namespace vdlisp
     return idx < (sizeof(kIsRefcounted)/sizeof(kIsRefcounted[0])) ? kIsRefcounted[idx] : false;
   }
 
-  inline void Value::retain_payload(Type t, void* p) noexcept { if (!p) return; auto *rc = static_cast<RcBase*>(p); rc->inc_ref(); }
+  inline __attribute__((always_inline)) void Value::retain_payload(Type t, void* p) noexcept { if (!p) return; auto *rc = static_cast<RcBase*>(p); rc->inc_ref(); }
 
   class PairData : public RcBase { public: Value car; Value cdr; };
 
