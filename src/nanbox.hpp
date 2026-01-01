@@ -110,7 +110,8 @@ namespace vdlisp
     Value(Value &&other) noexcept;
     ~Value();
 
-    auto operator=(Value other) -> Value&;
+    auto operator=(const Value &other) -> Value&;
+    auto operator=(Value &&other) noexcept -> Value&;
     auto operator=(std::nullptr_t) -> Value&;
 
     // Getters
@@ -172,7 +173,7 @@ namespace vdlisp
     void set_cfunc(CFunc fn) noexcept;
 
   private:
-    void retain() noexcept;
+    void retain() const noexcept;
     void release() noexcept;
     [[nodiscard]] auto payload_ptr() const noexcept -> void* { return reinterpret_cast<void*>(bits & kPayloadMask); }
     static void retain_payload(Type t, void* p) noexcept;
@@ -202,23 +203,43 @@ namespace vdlisp
 
   inline auto Value::get_pair() const noexcept -> PairData* { return reinterpret_cast<PairData*>(bits & kPayloadMask); }
 
-  inline void Value::set_pair(PairData* ptr) noexcept { release(); bits = kTagPair | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
+  inline void Value::set_pair(PairData* ptr) noexcept {
+    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
+    if (((bits & kTagMask) == kTagPair) && ((bits & kPayloadMask) == newp)) return;
+    release(); bits = kTagPair | newp;
+  }
 
   inline auto Value::get_string() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
 
-  inline void Value::set_string(StringData* ptr) noexcept { release(); bits = kTagString | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
+  inline void Value::set_string(StringData* ptr) noexcept {
+    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
+    if (((bits & kTagMask) == kTagString) && ((bits & kPayloadMask) == newp)) return;
+    release(); bits = kTagString | newp;
+  }
 
   inline auto Value::get_symbol() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
 
-  inline void Value::set_symbol(StringData* ptr) noexcept { release(); bits = kTagSymbol | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
+  inline void Value::set_symbol(StringData* ptr) noexcept {
+    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
+    if (((bits & kTagMask) == kTagSymbol) && ((bits & kPayloadMask) == newp)) return;
+    release(); bits = kTagSymbol | newp;
+  }
 
   inline auto Value::get_func() const noexcept -> FuncData* { return reinterpret_cast<FuncData*>(bits & kPayloadMask); }
 
-  inline void Value::set_func(FuncData* ptr) noexcept { release(); bits = kTagFunc | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
+  inline void Value::set_func(FuncData* ptr) noexcept {
+    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
+    if (((bits & kTagMask) == kTagFunc) && ((bits & kPayloadMask) == newp)) return;
+    release(); bits = kTagFunc | newp;
+  }
 
   inline auto Value::get_macro() const noexcept -> MacroData* { return reinterpret_cast<MacroData*>(bits & kPayloadMask); }
 
-  inline void Value::set_macro(MacroData* ptr) noexcept { release(); bits = kTagMacro | (reinterpret_cast<uint64_t>(ptr) & kPayloadMask); }
+  inline void Value::set_macro(MacroData* ptr) noexcept {
+    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
+    if (((bits & kTagMask) == kTagMacro) && ((bits & kPayloadMask) == newp)) return;
+    release(); bits = kTagMacro | newp;
+  }
 
   inline Prim Value::get_prim() const noexcept {
     Prim fn;
@@ -238,7 +259,7 @@ namespace vdlisp
 
   inline void Value::set_cfunc(CFunc fn) noexcept { release(); uint64_t payload = 0; std::memcpy(&payload, &fn, sizeof(fn)); bits = kTagCFunc | (payload & kPayloadMask); }
 
-  inline void Value::retain() noexcept {
+  inline void Value::retain() const noexcept {
     Type t = get_type();
     if (!is_refcounted(t)) return;
     retain_payload(t, payload_ptr());

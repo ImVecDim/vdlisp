@@ -71,11 +71,21 @@ Value::~Value() {
 
 #include <utility>
 
-auto Value::operator=(Value other) -> Value&
+auto Value::operator=(const Value &other) -> Value&
 {
-  // copy-and-swap: `other` is a copy (or moved-in) value; swap bits and let
-  // the destructor of `other` release the previous contents.
-  std::swap(bits, other.bits);
+  if (this == &other) return *this;
+  other.retain();
+  release();
+  bits = other.bits;
+  return *this;
+}
+
+auto Value::operator=(Value &&other) noexcept -> Value&
+{
+  if (this == &other) return *this;
+  release();
+  bits = other.bits;
+  other.bits = kTagNil;
   return *this;
 }
 
@@ -98,30 +108,6 @@ auto Value::operator=(std::nullptr_t) -> Value&
 //   `llvm::Function` and calls `JITCompiler::compileFunction`. A real
 //   implementation should generate proper IR that matches the function body
 //   and calling convention.
-
-// Macro handling is executed by the interpreter at expansion time. Macros are
-// tracked with a call counter (for diagnostics) but are not JIT compiled.
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
-
-// inlined in header (include/nanbox.hpp)
 
 void Value::release_payload(Type t, void* p) noexcept
 {

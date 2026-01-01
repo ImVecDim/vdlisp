@@ -332,7 +332,7 @@ static auto eval_args(State &S, const Value &list, Env *env) -> Value
     const Value &acar = apd->car;
     const Value &acdr = apd->cdr;
     Value av = S.eval(acar, env);
-    *last = S.make_pair(av, Value());
+    *last = S.make_pair(std::move(av), Value());
     PairData *lpd = (*last).get_pair();
     last = &lpd->cdr;
     a = &acdr;
@@ -365,12 +365,13 @@ static void bind_params_to_env(
 
     if (pcar && pcar.get_type() == TSYMBOL)
     {
-      Value bound;
+      // Avoid an extra temporary Value copy: assign directly into the map.
       if (*a) {
         PairData *apd = a->get_pair();
-        bound = apd->car;
+        out[*pcar.get_symbol()] = apd->car;
+      } else {
+        out[*pcar.get_symbol()] = Value{};
       }
-      out[*pcar.get_symbol()] = bound;
     }
 
     p = &pcdr;
@@ -387,9 +388,9 @@ auto State::eval(const Value &expr, Env *env) -> Value
   // failing expression so the top-level can report a source location.
   class EvalContext {
   public:
-    EvalContext(State &S, const Value &expr) : S(S), prev(S.current_expr) { S.current_expr = expr; }
+    EvalContext(State &S, const Value &expr) : S(S), prev(std::move(S.current_expr)) { S.current_expr = expr; }
     void commit() { commit_flag = true; }
-    ~EvalContext() { if (commit_flag) S.current_expr = prev; }
+    ~EvalContext() { if (commit_flag) std::swap(S.current_expr, prev); }
 
   private:
     State &S;
@@ -433,8 +434,7 @@ auto State::eval(const Value &expr, Env *env) -> Value
     PairData *pd = expr.get_pair();
     const Value &car = pd->car;
     const Value &cdr = pd->cdr;
-    Value fn_expr = car;
-    Value fn = eval(fn_expr, env);
+    Value fn = eval(car, env);
     if (!fn)
       throw std::runtime_error("attempt to call nil");
     // Special form (prim) receives unevaluated args and env
@@ -449,8 +449,8 @@ auto State::eval(const Value &expr, Env *env) -> Value
     {
       // bind params to raw args
       MacroData *md = fn.get_macro();
-      Value params = md->params;
-      Value body = md->body;
+      const Value &params = md->params;
+      const Value &body = md->body;
       Env *closure_env = md->closure_env;
       Env *e = make_env(closure_env);
       EnvGuard eg(e);
@@ -595,8 +595,8 @@ auto State::call(const Value &fn, const Value &args, Env *env) -> Value
               fd->compiled_code = nullptr;
               fd->jit_failed = true;
             }
-            Value params = fd->params;
-            Value body = fd->body;
+            const Value &params = fd->params;
+            const Value &body = fd->body;
             Env *closure_env = fd->closure_env;
             Env *e = make_env(closure_env ? closure_env : global);
             EnvGuard eg(e);
@@ -607,8 +607,8 @@ auto State::call(const Value &fn, const Value &args, Env *env) -> Value
     }
 
     // create new env (fallback interpreter path)
-    Value params = fd->params;
-    Value body = fd->body;
+    const Value &params = fd->params;
+    const Value &body = fd->body;
     Env *closure_env = fd->closure_env;
     Env *e = make_env(closure_env ? closure_env : global);
     EnvGuard eg(e);
