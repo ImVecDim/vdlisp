@@ -229,12 +229,12 @@ void register_core(State &S)
   S.register_prim("fn", [](State &S, const Value &args, Env *env) -> Value {
     Value params = pair_car(args);
     Value body = pair_cdr(args);
-    return S.make_function(params, body, env);
+    return S.make_function(std::move(params), std::move(body), env);
   });
   S.register_prim("macro", [](State &S, const Value &args, Env *env) -> Value {
     Value params = pair_car(args);
     Value body = pair_cdr(args);
-    return S.make_macro(params, body, env);
+    return S.make_macro(std::move(params), std::move(body), env);
   });
   S.register_prim("let", [](State &S, const Value &args, Env *env) -> Value {
     Value vars = pair_car(args);
