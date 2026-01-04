@@ -153,8 +153,8 @@ namespace vdlisp
     [[nodiscard]] explicit operator bool() const { return get_type() != TNIL; }
     [[nodiscard]] auto operator==(std::nullptr_t) const -> bool { return get_type() == TNIL; }
     [[nodiscard]] auto operator!=(std::nullptr_t) const -> bool { return get_type() != TNIL; }
-    [[nodiscard]] auto operator==(Value rhs) const -> bool { return bits == rhs.bits; }
-    [[nodiscard]] auto operator!=(Value rhs) const -> bool { return bits != rhs.bits; }
+    [[nodiscard]] auto operator==(const Value &rhs) const -> bool { return bits == rhs.bits; }
+    [[nodiscard]] auto operator!=(const Value &rhs) const -> bool { return bits != rhs.bits; }
     [[nodiscard]] auto identity_key() const noexcept -> uint64_t { return bits; }
     void reset() { *this = Value(); }
 

@@ -126,7 +126,7 @@ void register_core(State &S)
   S.register_builtin("cons", [](State &S, const Value &args) -> Value {
     Value a = pair_car(args);
     Value b = pair_car(pair_cdr(args));
-    return S.make_pair(a, b);
+    return S.make_pair(std::move(a), std::move(b));
   });
   S.register_builtin("car", [](State &, const Value &args) -> Value {
     Value v = pair_car(args);
@@ -206,12 +206,12 @@ void register_core(State &S)
           }
           else
           {
-            return S.make_pair(car, qq_expand(cdr, depth - 1));
+            return S.make_pair(std::move(car), qq_expand(cdr, depth - 1));
           }
         }
         if (is_symbol(car, "quasiquote"))
         {
-          return S.make_pair(car, qq_expand(cdr, depth + 1));
+          return S.make_pair(std::move(car), qq_expand(cdr, depth + 1));
         }
         return S.make_pair(qq_expand(car, depth), qq_expand(cdr, depth));
       }
@@ -224,7 +224,7 @@ void register_core(State &S)
     Value sym = pair_car(args);
     Value valexpr = pair_car(pair_cdr(args));
     Value val = S.eval(valexpr, env);
-    return S.set(sym, val, env);
+    return S.set(sym, std::move(val), env);
   });
   S.register_prim("fn", [](State &S, const Value &args, Env *env) -> Value {
     Value params = pair_car(args);
@@ -246,7 +246,7 @@ void register_core(State &S)
       vars = pair_cdr(vars);
       Value val = pair_car(vars);
       val = S.eval(val, e);
-      S.bind(sym, val, e);
+      S.bind(sym, std::move(val), e);
       vars = pair_cdr(vars);
     }
     return S.do_list(pair_cdr(args), e);

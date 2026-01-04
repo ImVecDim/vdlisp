@@ -48,7 +48,7 @@ extern "C" inline auto VDLISP__call_from_jit(void* funcdata_ptr, double* args, i
         vdlisp::Value *last = &head;
         for (int i = 0; i < argc; ++i) {
             vdlisp::Value num = S->make_number(args[i]);
-            *last = S->make_pair(num, vdlisp::Value());
+            *last = S->make_pair(std::move(num), vdlisp::Value());
             vdlisp::PairData *pd = (*last).get_pair();
             last = &pd->cdr;
         }

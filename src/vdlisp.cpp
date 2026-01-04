@@ -23,7 +23,8 @@ static auto make_string_list_range(State &S, It b, It e) -> Value
   Value head;
   Value *last = &head;
   for (; b != e; ++b) {
-    *last = S.make_pair(S.make_string(*b), Value());
+    Value sv = S.make_string(*b);
+    *last = S.make_pair(std::move(sv), Value());
     PairData *pd = (*last).get_pair();
     last = &pd->cdr;
   }
@@ -37,6 +38,9 @@ static auto make_string_list_range(State &S, It b, It e) -> Value
 
 State::State()
 {
+  // Pre-reserve common containers to reduce hash-table rehashing
+  symbol_intern.reserve(256);
+  loaded_modules.reserve(64);
   global = make_env();
   register_core(*this);
   // convenience: bind true symbol '#t'
@@ -51,7 +55,7 @@ auto State::alloc_string(const std::string &s) -> StringData*
   return new StringData(s);
 }
 
-auto State::alloc_pair(Value car, Value cdr) -> PairData*
+auto State::alloc_pair(Value &&car, Value &&cdr) -> PairData*
 {
   auto *p = new PairData();
   // Move values into the pair to avoid extra refcount increments/decrements
@@ -60,7 +64,7 @@ auto State::alloc_pair(Value car, Value cdr) -> PairData*
   return p;
 }
 
-auto State::alloc_func(Value params, Value body, Env *env) -> FuncData*
+auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData*
 {
   FuncData *f = new FuncData();
   // Move parameters/body to avoid extra refcount operations
@@ -75,7 +79,7 @@ auto State::alloc_func(Value params, Value body, Env *env) -> FuncData*
   return f;
 }
 
-auto State::alloc_macro(Value params, Value body, Env *env) -> MacroData*
+auto State::alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData*
 {
   MacroData *m = new MacroData();
   // Move parameters/body to avoid extra refcount operations
@@ -97,6 +101,8 @@ auto State::alloc_env() -> Env*
   Env *e = new Env();
   e->parent = nullptr;
   e->map.clear();
+  // reserve a small default capacity to avoid frequent rehashing for small envs
+  e->map.reserve(32);
   return e;
 }
 
@@ -199,7 +205,13 @@ auto State::make_symbol(const std::string &s) -> Value
   symbol_intern[s] = v;
   return v;
 }
-auto State::make_pair(Value car, Value cdr) -> Value
+auto State::make_pair(const Value &car, const Value &cdr) -> Value
+{
+  // copy into temporaries and forward to rvalue overload
+  return make_pair(Value(car), Value(cdr));
+}
+
+auto State::make_pair(Value &&car, Value &&cdr) -> Value
 {
   Value v = make_pooled_value(TPAIR);
   v.set_pair(alloc_pair(std::move(car), std::move(cdr)));
@@ -217,13 +229,23 @@ auto State::make_prim(const Prim &fn) -> Value
   v.set_prim(fn);
   return v;
 }
-auto State::make_function(Value params, Value body, Env *env) -> Value
+auto State::make_function(const Value &params, const Value &body, Env *env) -> Value
+{
+  return make_function(Value(params), Value(body), env);
+}
+
+auto State::make_function(Value &&params, Value &&body, Env *env) -> Value
 {
   Value v = make_pooled_value(TFUNC);
   v.set_func(alloc_func(std::move(params), std::move(body), env));
   return v;
 }
-auto State::make_macro(Value params, Value body, Env *env) -> Value
+auto State::make_macro(const Value &params, const Value &body, Env *env) -> Value
+{
+  return make_macro(Value(params), Value(body), env);
+}
+
+auto State::make_macro(Value &&params, Value &&body, Env *env) -> Value
 {
   Value v = make_pooled_value(TMACRO);
   v.set_macro(alloc_macro(std::move(params), std::move(body), env));

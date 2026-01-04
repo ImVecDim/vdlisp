@@ -27,11 +27,16 @@ namespace vdlisp
     auto make_number(double n) -> Value;
     auto make_string(const std::string &s) -> Value;
     auto make_symbol(const std::string &s) -> Value;
-    auto make_pair(Value car, Value cdr) -> Value;
+    auto make_pair(const Value &car, const Value &cdr) -> Value;
+    // Overload taking rvalue refs to avoid an extra move when caller can provide temporaries
+    auto make_pair(Value &&car, Value &&cdr) -> Value;
     auto make_cfunc(const CFunc &fn) -> Value;
-    auto make_function(Value params, Value body, Env *env) -> Value;
+    auto make_function(const Value &params, const Value &body, Env *env) -> Value;
+    // Overload taking rvalue refs for lower-cost construction when possible
+    auto make_function(Value &&params, Value &&body, Env *env) -> Value;
     auto make_prim(const Prim &fn) -> Value;
-    auto make_macro(Value params, Value body, Env *env) -> Value;
+    auto make_macro(const Value &params, const Value &body, Env *env) -> Value;
+    auto make_macro(Value &&params, Value &&body, Env *env) -> Value;
 
     // pooled helpers
     auto make_pooled_value(Type t) -> Value;
@@ -73,9 +78,10 @@ namespace vdlisp
   private:
     // Allocation helpers
     auto alloc_string(const std::string &s) -> StringData*;
-    auto alloc_pair(Value car, Value cdr) -> PairData*;
-    auto alloc_func(Value params, Value body, Env *env) -> FuncData*;
-    auto alloc_macro(Value params, Value body, Env *env) -> MacroData*;
+    // Allocation helpers take rvalue references to avoid an extra move
+    auto alloc_pair(Value &&car, Value &&cdr) -> PairData*;
+    auto alloc_func(Value &&params, Value &&body, Env *env) -> FuncData*;
+    auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData*;
 
     // Pooled allocation helpers for Value and Env
     auto alloc_env() -> Env*;

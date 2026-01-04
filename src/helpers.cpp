@@ -83,7 +83,7 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
         break;
       }
       // Otherwise append the parsed element to the list as before.
-      *last = S.make_pair(e, Value());
+      *last = S.make_pair(std::move(e), Value());
       PairData *pd = (*last).get_pair();
       S.set_source_loc(*last, name, open_line, open_col);
       last = &pd->cdr;
@@ -208,7 +208,7 @@ auto State::parse_all(const std::string &src, const std::string &name) -> Value
   while (pos < src.size())
   {
     Value e = parse_at(*this, src, pos, line, col, name);
-    *last = make_pair(e, Value());
+    *last = make_pair(std::move(e), Value());
     PairData *pd = (*last).get_pair();
     last = &pd->cdr;
   }
@@ -221,6 +221,8 @@ auto list_of(State &S, std::initializer_list<Value> items) -> Value
   Value *last = &head;
   for (auto &it : items)
   {
+    // `it` is from initializer_list; copy as before (moving here would
+    // not be safe for callers). Keep unchanged.
     *last = S.make_pair(it, Value());
     PairData *pd = (*last).get_pair();
     last = &pd->cdr;
