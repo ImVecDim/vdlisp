@@ -1,21 +1,24 @@
 #ifndef JIT_JIT_HPP
 #define JIT_JIT_HPP
 
-#include <llvm/ExecutionEngine/ExecutionEngine.h>
-#include <llvm/ExecutionEngine/MCJIT.h>
-#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Support/TargetSelect.h>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <string>
-#include <functional>
-
-#include "nanbox.hpp"
-#include "vdlisp.hpp"
 #include <unordered_map>
-#include <limits>
-#include <string>
+
+#include "vdlisp.hpp"
+
+namespace llvm {
+class ExecutionEngine;
+class Function;
+class Module;
+}
+
+namespace vdlisp {
+class FuncData;
+}
 
 class JITCompiler {
 public:

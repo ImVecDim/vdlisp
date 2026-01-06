@@ -2,12 +2,15 @@
 #define JIT_JIT_IR_EMITTER_HPP
 
 #include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/Function.h>
 #include <string>
 #include <unordered_map>
-#include <functional>
+
+namespace llvm {
+class AllocaInst;
+class Function;
+class LLVMContext;
+class Value;
+}
 
 namespace vdlisp { class FuncData; class Value; class PairData; }
 
