@@ -1,27 +1,28 @@
 // Separated IR builder for JIT compilation.
 #include "jit/jit_ir_builder.hpp"
-#include "nanbox.hpp"
 #include "helpers.hpp"
+#include "nanbox.hpp"
 
+#include "jit/jit_ir_emitter.hpp"
+#include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/Function.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Verifier.h>
-#include <vector>
 #include <string>
 #include <unordered_map>
-#include "jit/jit_ir_emitter.hpp"
+#include <vector>
 
 using namespace vdlisp;
 using namespace llvm;
 
-auto build_func_ir(vdlisp::FuncData* func, llvm::Module &M, llvm::LLVMContext &context, const std::string &name) -> llvm::Function* {
-    if (!func) return nullptr;
+auto build_func_ir(vdlisp::FuncData *func, llvm::Module &M, llvm::LLVMContext &context, const std::string &name) -> llvm::Function * {
+    if (!func)
+        return nullptr;
 
-    std::vector<llvm::Type*> fparams = {llvm::PointerType::getUnqual(llvm::Type::getDoubleTy(context)), llvm::Type::getInt32Ty(context)};
-    FunctionType *ft = FunctionType::get(llvm::Type::getDoubleTy(context), llvm::ArrayRef<llvm::Type*>(fparams.data(), fparams.size()), false);
+    std::vector<llvm::Type *> fparams = {llvm::PointerType::getUnqual(llvm::Type::getDoubleTy(context)), llvm::Type::getInt32Ty(context)};
+    FunctionType *ft = FunctionType::get(llvm::Type::getDoubleTy(context), llvm::ArrayRef<llvm::Type *>(fparams.data(), fparams.size()), false);
     Function *F = Function::Create(ft, Function::ExternalLinkage, name, &M);
 
     BasicBlock *BB = BasicBlock::Create(context, "entry", F);
@@ -34,11 +35,13 @@ auto build_func_ir(vdlisp::FuncData* func, llvm::Module &M, llvm::LLVMContext &c
     while (body) {
         vdlisp::Value car = pair_car(body);
         llvm::Value *v = emitter.emitExpr(car);
-        if (!v) return nullptr;
+        if (!v)
+            return nullptr;
         lastv = v;
         body = pair_cdr(body);
     }
-    if (!lastv) lastv = ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    if (!lastv)
+        lastv = ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     // If the value was produced in a block that does not yet have a
     // terminator (e.g. the cond continuation block), emit the return
     // there to avoid inserting a return into the entry block after

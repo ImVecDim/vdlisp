@@ -5,14 +5,12 @@
 #include <cstddef>
 #include <initializer_list>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
-namespace vdlisp
-{
+namespace vdlisp {
 
-  class State
-  {
+class State {
   public:
     Env *global = nullptr;
     std::unordered_map<std::string, Value> symbol_intern;
@@ -40,13 +38,13 @@ namespace vdlisp
 
     // pooled helpers
     auto make_pooled_value(Type t) -> Value;
-    auto make_env(Env *parent = nullptr) -> Env*;
+    auto make_env(Env *parent = nullptr) -> Env *;
 
     // convenience helpers for constructing lists
     auto make_string_list(const std::vector<std::string> &items) -> Value;
     auto make_string_list(int argc, char **argv, int start = 0) -> Value;
     auto make_string_list(std::initializer_list<std::string> items) -> Value;
-    auto make_string_list(std::initializer_list<const char*> items) -> Value;
+    auto make_string_list(std::initializer_list<const char *> items) -> Value;
 
     // parsing / eval
     auto parse(const std::string &src, const std::string &name = "(string)") -> Value;
@@ -56,7 +54,12 @@ namespace vdlisp
     auto do_list(const Value &body, Env *env) -> Value;
 
     // source location helpers
-    struct SourceLoc { std::string file; size_t line = 0; size_t col = 0; std::string label; };
+    struct SourceLoc {
+        std::string file;
+        size_t line = 0;
+        size_t col = 0;
+        std::string label;
+    };
     void set_source_loc(const Value &v, const std::string &file, size_t line, size_t col);
     auto get_source_loc(const Value &v, SourceLoc &out) const -> bool;
 
@@ -77,14 +80,14 @@ namespace vdlisp
 
   private:
     // Allocation helpers
-    auto alloc_string(const std::string &s) -> StringData*;
+    auto alloc_string(const std::string &s) -> StringData *;
     // Allocation helpers take rvalue references to avoid an extra move
-    auto alloc_pair(Value &&car, Value &&cdr) -> PairData*;
-    auto alloc_func(Value &&params, Value &&body, Env *env) -> FuncData*;
-    auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData*;
+    auto alloc_pair(Value &&car, Value &&cdr) -> PairData *;
+    auto alloc_func(Value &&params, Value &&body, Env *env) -> FuncData *;
+    auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData *;
 
     // Pooled allocation helpers for Value and Env
-    auto alloc_env() -> Env*;
+    auto alloc_env() -> Env *;
 
   public:
     // helpers
@@ -95,16 +98,14 @@ namespace vdlisp
     void bind_global(const std::string &name, Value v);
     auto bind(const Value &sym, Value v, Env *env) -> Value;
     auto set(const Value &sym, Value v, Env *env) -> Value;
+};
 
+// Pointer to the currently active State while executing JIT code.
+// Set by `State::call` before entering native JIT code and cleared after.
+extern State *jit_active_state;
 
-  };
-
-  // Pointer to the currently active State while executing JIT code.
-  // Set by `State::call` before entering native JIT code and cleared after.
-  extern State* jit_active_state;
-
-  // utility
-  auto list_of(State &S, std::initializer_list<Value> items) -> Value;
+// utility
+auto list_of(State &S, std::initializer_list<Value> items) -> Value;
 
 } // namespace vdlisp
 

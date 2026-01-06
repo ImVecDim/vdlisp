@@ -2,11 +2,11 @@
 #define VDLISP__CORE_HPP
 
 namespace vdlisp {
-  class State;
+class State;
 }
 
 namespace vdlisp {
-  void register_core(State &S);
+void register_core(State &S);
 }
 
 #endif // VDLISP__CORE_HPP

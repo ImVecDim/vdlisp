@@ -1,296 +1,269 @@
 #include "core.hpp"
 #include "helpers.hpp"
+#include "require.hpp"
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <filesystem>
 #include <optional>
-#include "require.hpp"
+#include <sstream>
 
 using namespace vdlisp;
 
-namespace vdlisp
-{
+namespace vdlisp {
 
 static auto arith_binary(
-  State &S,
-  const Value &args,
-  double (*op)(double, double),
-  const char *name) -> Value
-{
-  if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
-    throw std::runtime_error(std::string(name) + " requires exactly two arguments");
-  double a = require_number(pair_car(args), name);
-  double b = require_number(pair_car(pair_cdr(args)), name);
-  return S.make_number(op(a, b));
+    State &S,
+    const Value &args,
+    double (*op)(double, double),
+    const char *name) -> Value {
+    if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
+        throw std::runtime_error(std::string(name) + " requires exactly two arguments");
+    double a = require_number(pair_car(args), name);
+    double b = require_number(pair_car(pair_cdr(args)), name);
+    return S.make_number(op(a, b));
 }
 
 static auto compare_binary(
-  State &S,
-  const Value &args,
-  bool (*cmp)(double, double),
-  const char *name) -> Value
-{
-  if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
-    throw std::runtime_error(std::string(name) + " requires exactly two arguments");
-  double a = require_number(pair_car(args), name);
-  double b = require_number(pair_car(pair_cdr(args)), name);
-  return cmp(a, b) ? S.get_bound("#t", S.global) : Value();
+    State &S,
+    const Value &args,
+    bool (*cmp)(double, double),
+    const char *name) -> Value {
+    if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
+        throw std::runtime_error(std::string(name) + " requires exactly two arguments");
+    double a = require_number(pair_car(args), name);
+    double b = require_number(pair_car(pair_cdr(args)), name);
+    return cmp(a, b) ? S.get_bound("#t", S.global) : Value();
 }
 
-void register_core(State &S)
-{
-  // --- builtins ---
-  S.register_builtin("print", [](State &S, const Value &args) -> Value {
-    Value last = Value();
-    bool first = true;
-    Value cur = args;
-    while (cur)
-    {
-      if (!first)
-        std::cout << ' ';
-      Value el = pair_car(cur);
-      std::cout << S.to_string(el);
-      first = false;
-      last = el;
-      cur = pair_cdr(cur);
-    }
-    std::cout << '\n';
-    return last;
-  });
+void register_core(State &S) {
+    // --- builtins ---
+    S.register_builtin("print", [](State &S, const Value &args) -> Value {
+        Value last = Value();
+        bool first = true;
+        Value cur = args;
+        while (cur) {
+            if (!first)
+                std::cout << ' ';
+            Value el = pair_car(cur);
+            std::cout << S.to_string(el);
+            first = false;
+            last = el;
+            cur = pair_cdr(cur);
+        }
+        std::cout << '\n';
+        return last;
+    });
 
-  S.register_builtin("+", [](State &S, const Value &args) -> Value {
-    return arith_binary(S, args,
-             [](double a, double b) -> double { return a + b; },
-             "+");
-  });
-  S.register_builtin("-", [](State &S, const Value &args) -> Value {
-    return arith_binary(S, args,
-             [](double a, double b) -> double { return a - b; },
-             "-");
-  });
-  S.register_builtin("*", [](State &S, const Value &args) -> Value {
-    return arith_binary(S, args,
-             [](double a, double b) -> double { return a * b; },
-             "*");
-  });
-  S.register_builtin("/", [](State &S, const Value &args) -> Value {
-    return arith_binary(S, args,
-             [](double a, double b) -> double {
+    S.register_builtin("+", [](State &S, const Value &args) -> Value {
+        return arith_binary(S, args, [](double a, double b) -> double { return a + b; }, "+");
+    });
+    S.register_builtin("-", [](State &S, const Value &args) -> Value {
+        return arith_binary(S, args, [](double a, double b) -> double { return a - b; }, "-");
+    });
+    S.register_builtin("*", [](State &S, const Value &args) -> Value {
+        return arith_binary(S, args, [](double a, double b) -> double { return a * b; }, "*");
+    });
+    S.register_builtin("/", [](State &S, const Value &args) -> Value {
+        return arith_binary(S, args, [](double a, double b) -> double {
                if (b == 0.0)
                  throw std::runtime_error("division by zero");
-               return a / b;
-             },
-             "/");
-  });
+               return a / b; }, "/");
+    });
 
-  S.register_builtin("<", [](State &S, const Value &args) -> Value {
-    return compare_binary(S, args,
-              [](double a, double b) -> bool { return a < b; },
-              "<");
-  });
-  S.register_builtin(">", [](State &S, const Value &args) -> Value {
-    return compare_binary(S, args,
-              [](double a, double b) -> bool { return a > b; },
-              ">");
-  });
-  S.register_builtin("<=", [](State &S, const Value &args) -> Value {
-    return compare_binary(S, args,
-              [](double a, double b) -> bool { return a <= b; },
-              "<=");
-  });
-  S.register_builtin(">=", [](State &S, const Value &args) -> Value {
-    return compare_binary(S, args,
-              [](double a, double b) -> bool { return a >= b; },
-              ">=");
-  });
-  S.register_builtin("list", [](State &, const Value &args) -> Value {
-    return args;
-  });
-  S.register_builtin("type", [](State &S, const Value &args) -> Value {
-    Value v = pair_car(args);
-    return S.make_symbol(type_name(v));
-  });
-  S.register_builtin("parse", [](State &S, const Value &args) -> Value {
-    if (!args || !pair_car(args) || pair_car(args).get_type() != TSTRING)
-      throw std::runtime_error("parse requires a string");
-    return S.parse(*pair_car(args).get_string());
-  });
-  S.register_builtin("error", [](State &S, const Value &args) -> Value {
-    std::string msg = pair_car(args) ? S.to_string(pair_car(args)) : std::string("error");
-    throw std::runtime_error(msg);
-    return {};
-  });
-
-  S.register_builtin("cons", [](State &S, const Value &args) -> Value {
-    Value a = pair_car(args);
-    Value b = pair_car(pair_cdr(args));
-    return S.make_pair(std::move(a), std::move(b));
-  });
-  S.register_builtin("car", [](State &, const Value &args) -> Value {
-    Value v = pair_car(args);
-    if (!v)
-      return {};
-    if (v.get_type() != TPAIR)
-      throw std::runtime_error("car expects a pair");
-    return pair_car(v);
-  });
-  S.register_builtin("cdr", [](State &, const Value &args) -> Value {
-    Value v = pair_car(args);
-    if (!v)
-      return {};
-    if (v.get_type() != TPAIR)
-      throw std::runtime_error("cdr expects a pair");
-    return pair_cdr(v);
-  });
-  S.register_builtin("setcar", [](State &, const Value &args) -> Value {
-    Value p = pair_car(args);
-    Value v = pair_car(pair_cdr(args));
-    if (!p || p.get_type() != TPAIR)
-      throw std::runtime_error("setcar expects a pair");
-    pair_set_car(p, v);
-    return v;
-  });
-  S.register_builtin("setcdr", [](State &, const Value &args) -> Value {
-    Value p = pair_car(args);
-    Value v = pair_car(pair_cdr(args));
-    if (!p || p.get_type() != TPAIR)
-      throw std::runtime_error("setcdr expects a pair");
-    pair_set_cdr(p, v);
-    return v;
-  });
-
-  S.register_builtin("=", [](State &S, const Value &args) -> Value {
-    if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
-      throw std::runtime_error("= requires exactly two arguments");
-    Value a = pair_car(args);
-    Value b = pair_car(pair_cdr(args));
-    return value_equal(a, b) ? S.get_bound("#t", S.global) : Value();
-  });
-
-  S.register_builtin("exit", [](State &S, const Value &args) -> Value {
-    int code = 0;
-    if (pair_car(args))
-      code = (int)require_number(pair_car(args), "exit");
-    // Ensure pooled memory is released before terminating the process.
-    S.shutdown_and_purge_pools();
-    std::exit(code);
-    return {};
-  });
-
-  // use centralized require implementation
-  register_require(S);
-
-  // --- prims ---
-  S.register_prim("quote", [](State &, const Value &args, Env *) -> Value {
-    return pair_car(args);
-  });
-  S.register_prim("unquote", [](State &S, const Value &args, Env *env) -> Value {
-    return pair_car(args) ? S.eval(pair_car(args), env) : Value();
-  });
-  S.register_prim("quasiquote", [](State &S, const Value &args, Env *env) -> Value {
-    std::function<Value(const Value&, int)> qq_expand = [&](const Value &expr, int depth) -> Value {
-      if (!expr)
+    S.register_builtin("<", [](State &S, const Value &args) -> Value {
+        return compare_binary(S, args, [](double a, double b) -> bool { return a < b; }, "<");
+    });
+    S.register_builtin(">", [](State &S, const Value &args) -> Value {
+        return compare_binary(S, args, [](double a, double b) -> bool { return a > b; }, ">");
+    });
+    S.register_builtin("<=", [](State &S, const Value &args) -> Value {
+        return compare_binary(S, args, [](double a, double b) -> bool { return a <= b; }, "<=");
+    });
+    S.register_builtin(">=", [](State &S, const Value &args) -> Value {
+        return compare_binary(S, args, [](double a, double b) -> bool { return a >= b; }, ">=");
+    });
+    S.register_builtin("list", [](State &, const Value &args) -> Value {
+        return args;
+    });
+    S.register_builtin("type", [](State &S, const Value &args) -> Value {
+        Value v = pair_car(args);
+        return S.make_symbol(type_name(v));
+    });
+    S.register_builtin("parse", [](State &S, const Value &args) -> Value {
+        if (!args || !pair_car(args) || pair_car(args).get_type() != TSTRING)
+            throw std::runtime_error("parse requires a string");
+        return S.parse(*pair_car(args).get_string());
+    });
+    S.register_builtin("error", [](State &S, const Value &args) -> Value {
+        std::string msg = pair_car(args) ? S.to_string(pair_car(args)) : std::string("error");
+        throw std::runtime_error(msg);
         return {};
-      if (is_pair(expr))
-      {
-        Value car = pair_car(expr);
-        Value cdr = pair_cdr(expr);
-        if (is_symbol(car, "unquote"))
-        {
-          if (depth == 1)
-          {
-            Value uq_args = cdr;
-            return uq_args ? S.eval(pair_car(uq_args), env) : Value();
-          }
-          else
-          {
-            return S.make_pair(std::move(car), qq_expand(cdr, depth - 1));
-          }
-        }
-        if (is_symbol(car, "quasiquote"))
-        {
-          return S.make_pair(std::move(car), qq_expand(cdr, depth + 1));
-        }
-        return S.make_pair(qq_expand(car, depth), qq_expand(cdr, depth));
-      }
-      return expr;
-    };
-    return qq_expand(pair_car(args), 1);
-  });
-  // `if` removed as a primitive; provide it via a macro implemented using `cond`.
-  S.register_prim("set", [](State &S, const Value &args, Env *env) -> Value {
-    Value sym = pair_car(args);
-    Value valexpr = pair_car(pair_cdr(args));
-    Value val = S.eval(valexpr, env);
-    return S.set(sym, std::move(val), env);
-  });
-  S.register_prim("fn", [](State &S, const Value &args, Env *env) -> Value {
-    Value params = pair_car(args);
-    Value body = pair_cdr(args);
-    return S.make_function(std::move(params), std::move(body), env);
-  });
-  S.register_prim("macro", [](State &S, const Value &args, Env *env) -> Value {
-    Value params = pair_car(args);
-    Value body = pair_cdr(args);
-    return S.make_macro(std::move(params), std::move(body), env);
-  });
-  S.register_prim("let", [](State &S, const Value &args, Env *env) -> Value {
-    Value vars = pair_car(args);
-    Env *e = S.make_env(env);
-    EnvGuard eg(e);
-    while (vars)
-    {
-      Value sym = pair_car(vars);
-      vars = pair_cdr(vars);
-      Value val = pair_car(vars);
-      val = S.eval(val, e);
-      S.bind(sym, std::move(val), e);
-      vars = pair_cdr(vars);
-    }
-    return S.do_list(pair_cdr(args), e);
-  });
-  S.register_prim("while", [](State &S, const Value &args, Env *env) -> Value {
-    Value cond = pair_car(args);
-    Value body = pair_cdr(args);
-    Value res;
-    while (S.eval(cond, env))
-    {
-      res = S.do_list(body, env);
-    }
-    return res;
-  });
-  // cond special form: evaluate clauses sequentially; for the first true
-  // test evaluate and return the body. Implemented directly to avoid
-  // depending on `if` (which may be provided at the language level as a macro).
-  S.register_prim("cond", [](State &S, const Value &args, Env *env) -> Value {
-    Value clauses = args;
-    while (clauses) {
-      Value clause = pair_car(clauses);
-      if (!clause) { clauses = pair_cdr(clauses); continue; }
-      Value test = pair_car(clause);
-      Value body = pair_cdr(clause);
-      Value tval = S.eval(test, env);
-      if (tval)
-        return S.do_list(body, env);
-      clauses = pair_cdr(clauses);
-    }
-    return S.make_nil();
-  });
+    });
 
-  // Provide `if` as a language-level macro implemented via `cond`.
-  // This creates a proper TMACRO binding in the global environment so user
-  // scripts can rely on `if` even though it's not a primitive.
-  S.register_prim("apply", [](State &S, const Value &args, Env *env) -> Value {
-    Value fnexpr = pair_car(args);
-    if (!fnexpr)
-      throw std::runtime_error("apply requires a function");
-    Value listexpr = pair_car(pair_cdr(args));
-    Value fn = S.eval(fnexpr, env);
-    Value list = S.eval(listexpr, env);
-    return S.call(fn, list, env);
-  });
+    S.register_builtin("cons", [](State &S, const Value &args) -> Value {
+        Value a = pair_car(args);
+        Value b = pair_car(pair_cdr(args));
+        return S.make_pair(std::move(a), std::move(b));
+    });
+    S.register_builtin("car", [](State &, const Value &args) -> Value {
+        Value v = pair_car(args);
+        if (!v)
+            return {};
+        if (v.get_type() != TPAIR)
+            throw std::runtime_error("car expects a pair");
+        return pair_car(v);
+    });
+    S.register_builtin("cdr", [](State &, const Value &args) -> Value {
+        Value v = pair_car(args);
+        if (!v)
+            return {};
+        if (v.get_type() != TPAIR)
+            throw std::runtime_error("cdr expects a pair");
+        return pair_cdr(v);
+    });
+    S.register_builtin("setcar", [](State &, const Value &args) -> Value {
+        Value p = pair_car(args);
+        Value v = pair_car(pair_cdr(args));
+        if (!p || p.get_type() != TPAIR)
+            throw std::runtime_error("setcar expects a pair");
+        pair_set_car(p, v);
+        return v;
+    });
+    S.register_builtin("setcdr", [](State &, const Value &args) -> Value {
+        Value p = pair_car(args);
+        Value v = pair_car(pair_cdr(args));
+        if (!p || p.get_type() != TPAIR)
+            throw std::runtime_error("setcdr expects a pair");
+        pair_set_cdr(p, v);
+        return v;
+    });
+
+    S.register_builtin("=", [](State &S, const Value &args) -> Value {
+        if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
+            throw std::runtime_error("= requires exactly two arguments");
+        Value a = pair_car(args);
+        Value b = pair_car(pair_cdr(args));
+        return value_equal(a, b) ? S.get_bound("#t", S.global) : Value();
+    });
+
+    S.register_builtin("exit", [](State &S, const Value &args) -> Value {
+        int code = 0;
+        if (pair_car(args))
+            code = (int)require_number(pair_car(args), "exit");
+        // Ensure pooled memory is released before terminating the process.
+        S.shutdown_and_purge_pools();
+        std::exit(code);
+        return {};
+    });
+
+    // use centralized require implementation
+    register_require(S);
+
+    // --- prims ---
+    S.register_prim("quote", [](State &, const Value &args, Env *) -> Value {
+        return pair_car(args);
+    });
+    S.register_prim("unquote", [](State &S, const Value &args, Env *env) -> Value {
+        return pair_car(args) ? S.eval(pair_car(args), env) : Value();
+    });
+    S.register_prim("quasiquote", [](State &S, const Value &args, Env *env) -> Value {
+        std::function<Value(const Value &, int)> qq_expand = [&](const Value &expr, int depth) -> Value {
+            if (!expr)
+                return {};
+            if (is_pair(expr)) {
+                Value car = pair_car(expr);
+                Value cdr = pair_cdr(expr);
+                if (is_symbol(car, "unquote")) {
+                    if (depth == 1) {
+                        Value uq_args = cdr;
+                        return uq_args ? S.eval(pair_car(uq_args), env) : Value();
+                    } else {
+                        return S.make_pair(std::move(car), qq_expand(cdr, depth - 1));
+                    }
+                }
+                if (is_symbol(car, "quasiquote")) {
+                    return S.make_pair(std::move(car), qq_expand(cdr, depth + 1));
+                }
+                return S.make_pair(qq_expand(car, depth), qq_expand(cdr, depth));
+            }
+            return expr;
+        };
+        return qq_expand(pair_car(args), 1);
+    });
+    // `if` removed as a primitive; provide it via a macro implemented using `cond`.
+    S.register_prim("set", [](State &S, const Value &args, Env *env) -> Value {
+        Value sym = pair_car(args);
+        Value valexpr = pair_car(pair_cdr(args));
+        Value val = S.eval(valexpr, env);
+        return S.set(sym, std::move(val), env);
+    });
+    S.register_prim("fn", [](State &S, const Value &args, Env *env) -> Value {
+        Value params = pair_car(args);
+        Value body = pair_cdr(args);
+        return S.make_function(std::move(params), std::move(body), env);
+    });
+    S.register_prim("macro", [](State &S, const Value &args, Env *env) -> Value {
+        Value params = pair_car(args);
+        Value body = pair_cdr(args);
+        return S.make_macro(std::move(params), std::move(body), env);
+    });
+    S.register_prim("let", [](State &S, const Value &args, Env *env) -> Value {
+        Value vars = pair_car(args);
+        Env *e = S.make_env(env);
+        EnvGuard eg(e);
+        while (vars) {
+            Value sym = pair_car(vars);
+            vars = pair_cdr(vars);
+            Value val = pair_car(vars);
+            val = S.eval(val, e);
+            S.bind(sym, std::move(val), e);
+            vars = pair_cdr(vars);
+        }
+        return S.do_list(pair_cdr(args), e);
+    });
+    S.register_prim("while", [](State &S, const Value &args, Env *env) -> Value {
+        Value cond = pair_car(args);
+        Value body = pair_cdr(args);
+        Value res;
+        while (S.eval(cond, env)) {
+            res = S.do_list(body, env);
+        }
+        return res;
+    });
+    // cond special form: evaluate clauses sequentially; for the first true
+    // test evaluate and return the body. Implemented directly to avoid
+    // depending on `if` (which may be provided at the language level as a macro).
+    S.register_prim("cond", [](State &S, const Value &args, Env *env) -> Value {
+        Value clauses = args;
+        while (clauses) {
+            Value clause = pair_car(clauses);
+            if (!clause) {
+                clauses = pair_cdr(clauses);
+                continue;
+            }
+            Value test = pair_car(clause);
+            Value body = pair_cdr(clause);
+            Value tval = S.eval(test, env);
+            if (tval)
+                return S.do_list(body, env);
+            clauses = pair_cdr(clauses);
+        }
+        return S.make_nil();
+    });
+
+    // Provide `if` as a language-level macro implemented via `cond`.
+    // This creates a proper TMACRO binding in the global environment so user
+    // scripts can rely on `if` even though it's not a primitive.
+    S.register_prim("apply", [](State &S, const Value &args, Env *env) -> Value {
+        Value fnexpr = pair_car(args);
+        if (!fnexpr)
+            throw std::runtime_error("apply requires a function");
+        Value listexpr = pair_car(pair_cdr(args));
+        Value fn = S.eval(fnexpr, env);
+        Value list = S.eval(listexpr, env);
+        return S.call(fn, list, env);
+    });
 }
 
 } // namespace vdlisp

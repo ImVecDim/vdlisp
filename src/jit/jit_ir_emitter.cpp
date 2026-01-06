@@ -1,20 +1,19 @@
 // Implementation of a focused IR emitter used by build_func_ir.
 #include "jit/jit_ir_emitter.hpp"
-#include "nanbox.hpp"
 #include "helpers.hpp"
+#include "nanbox.hpp"
 
-#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 
 using namespace vdlisp;
 using namespace llvm;
 
-JITIREmitter::JITIREmitter(vdlisp::FuncData* func_, llvm::Function* F_, llvm::LLVMContext &context_)
-  : func(func_), F(F_), context(context_), ir(&F_->getEntryBlock())
-{
+JITIREmitter::JITIREmitter(vdlisp::FuncData *func_, llvm::Function *F_, llvm::LLVMContext &context_)
+    : func(func_), F(F_), context(context_), ir(&F_->getEntryBlock()) {
     vdlisp::Value p = func->params;
     int idx = 0;
     while (p) {
@@ -31,21 +30,21 @@ JITIREmitter::JITIREmitter(vdlisp::FuncData* func_, llvm::Function* F_, llvm::LL
     }
 }
 
-auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst*
-{
+auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst * {
     auto it = locals.find(name);
-    if (it != locals.end()) return it->second;
+    if (it != locals.end())
+        return it->second;
     llvm::IRBuilder<> tmp(&F->getEntryBlock(), F->getEntryBlock().begin());
     llvm::AllocaInst *a = tmp.CreateAlloca(llvm::Type::getDoubleTy(context));
     locals[name] = a;
     return a;
 }
 
-auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value*
-{
-    if (!clauses) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    std::vector<BasicBlock*> testBBs;
-    std::vector<BasicBlock*> bodyBBs;
+auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value * {
+    if (!clauses)
+        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    std::vector<BasicBlock *> testBBs;
+    std::vector<BasicBlock *> bodyBBs;
     std::vector<vdlisp::Value> tests;
     std::vector<vdlisp::Value> bodies;
     int idx = 0;
@@ -62,21 +61,23 @@ auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value*
         ++idx;
     }
     llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "cond_cont", F);
-    if (testBBs.empty()) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    if (testBBs.empty())
+        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     ir.CreateBr(testBBs[0]);
 
     for (size_t i = 0; i < testBBs.size(); ++i) {
         ir.SetInsertPoint(testBBs[i]);
         vdlisp::Value test = tests[i];
         llvm::Value *condv = emitExpr(test);
-        if (!condv) return nullptr;
+        if (!condv)
+            return nullptr;
         llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
         llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
-        BasicBlock *next = (i + 1 < testBBs.size()) ? testBBs[i+1] : contBB;
+        BasicBlock *next = (i + 1 < testBBs.size()) ? testBBs[i + 1] : contBB;
         ir.CreateCondBr(is_true, bodyBBs[i], next);
     }
 
-    std::vector<llvm::Value*> vals;
+    std::vector<llvm::Value *> vals;
     for (size_t i = 0; i < bodyBBs.size(); ++i) {
         ir.SetInsertPoint(bodyBBs[i]);
         vdlisp::Value b = bodies[i];
@@ -84,18 +85,21 @@ auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value*
         while (b) {
             vdlisp::Value ex = pair_car(b);
             llvm::Value *v = emitExpr(ex);
-            if (!v) return nullptr;
+            if (!v)
+                return nullptr;
             last = v;
             b = b.get_pair()->cdr;
         }
-        if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+        if (!last)
+            last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
         ir.CreateBr(contBB);
         vals.push_back(last);
     }
 
     ir.SetInsertPoint(contBB);
     llvm::PHINode *phi = ir.CreatePHI(llvm::Type::getDoubleTy(context), (int)vals.size());
-    for (size_t i = 0; i < vals.size(); ++i) phi->addIncoming(vals[i], bodyBBs[i]);
+    for (size_t i = 0; i < vals.size(); ++i)
+        phi->addIncoming(vals[i], bodyBBs[i]);
     // If the test chain can fall through to the continuation without
     // selecting a body (i.e. last test false), add an incoming value from
     // the last test block representing `nil`/false (0.0) so the PHI node
@@ -106,8 +110,7 @@ auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value*
     }
     return phi;
 }
-auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value*
-{
+auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value * {
     vdlisp::Value cond = pair_car(rest);
     vdlisp::Value body = rest.get_pair()->cdr;
     llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
@@ -119,7 +122,8 @@ auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value*
     ir.CreateBr(loopBB);
     ir.SetInsertPoint(loopBB);
     llvm::Value *condv = emitExpr(cond);
-    if (!condv) return nullptr;
+    if (!condv)
+        return nullptr;
     llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
     ir.CreateCondBr(is_true, bodyBB, contBB);
 
@@ -129,19 +133,20 @@ auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value*
     while (bb) {
         vdlisp::Value ex = pair_car(bb);
         llvm::Value *v = emitExpr(ex);
-        if (!v) return nullptr;
+        if (!v)
+            return nullptr;
         last = v;
         bb = bb.get_pair()->cdr;
     }
-    if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    if (!last)
+        last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     ir.CreateBr(loopBB);
 
     ir.SetInsertPoint(contBB);
     return last;
 }
 
-auto JITIREmitter::compileLet(const vdlisp::Value &rest) -> llvm::Value*
-{
+auto JITIREmitter::compileLet(const vdlisp::Value &rest) -> llvm::Value * {
     vdlisp::Value bindings = pair_car(rest);
     vdlisp::Value letbody = rest.get_pair()->cdr;
     vdlisp::Value b = bindings;
@@ -150,9 +155,11 @@ auto JITIREmitter::compileLet(const vdlisp::Value &rest) -> llvm::Value*
             vdlisp::Value pair = pair_car(b);
             vdlisp::Value name = pair_car(pair);
             vdlisp::Value val = pair_car(pair_cdr(pair));
-            if (!name || name.get_type() != vdlisp::TSYMBOL) return nullptr;
+            if (!name || name.get_type() != vdlisp::TSYMBOL)
+                return nullptr;
             llvm::Value *v = emitExpr(val);
-            if (!v) return nullptr;
+            if (!v)
+                return nullptr;
             llvm::AllocaInst *a = ensure_local(*name.get_symbol());
             ir.CreateStore(v, a);
             b = pair_cdr(b);
@@ -160,12 +167,15 @@ auto JITIREmitter::compileLet(const vdlisp::Value &rest) -> llvm::Value*
     } else {
         while (b) {
             vdlisp::Value name = pair_car(b);
-            if (!name || name.get_type() != vdlisp::TSYMBOL) return nullptr;
+            if (!name || name.get_type() != vdlisp::TSYMBOL)
+                return nullptr;
             vdlisp::Value next = pair_cdr(b);
-            if (!next) return nullptr;
+            if (!next)
+                return nullptr;
             vdlisp::Value val = pair_car(next);
             llvm::Value *v = emitExpr(val);
-            if (!v) return nullptr;
+            if (!v)
+                return nullptr;
             llvm::AllocaInst *a = ensure_local(*name.get_symbol());
             ir.CreateStore(v, a);
             b = pair_cdr(next);
@@ -176,16 +186,18 @@ auto JITIREmitter::compileLet(const vdlisp::Value &rest) -> llvm::Value*
     while (bb) {
         vdlisp::Value ex = pair_car(bb);
         llvm::Value *v = emitExpr(ex);
-        if (!v) return nullptr;
+        if (!v)
+            return nullptr;
         last = v;
         bb = pair_cdr(bb);
     }
-    if (!last) last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    if (!last)
+        last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     return last;
 }
-auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value*
-{
-    if (!expr) return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value * {
+    if (!expr)
+        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     if (expr.get_type() == vdlisp::TNUMBER) {
         return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), expr.get_number());
     }
@@ -230,64 +242,86 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value*
         vdlisp::PairData *pd = expr.get_pair();
         vdlisp::Value op = pd->car;
         vdlisp::Value rest = pd->cdr;
-        if (!op || op.get_type() != vdlisp::TSYMBOL) return nullptr;
+        if (!op || op.get_type() != vdlisp::TSYMBOL)
+            return nullptr;
         std::string opname = *op.get_symbol();
 
-        if (opname == "cond") return compileCond(rest);
-        if (opname == "while") return compileWhile(rest);
-        if (opname == "let") return compileLet(rest);
+        if (opname == "cond")
+            return compileCond(rest);
+        if (opname == "while")
+            return compileWhile(rest);
+        if (opname == "let")
+            return compileLet(rest);
 
-        std::vector<llvm::Value*> vals;
+        std::vector<llvm::Value *> vals;
         vdlisp::Value a = rest;
         while (a) {
-                vdlisp::Value av = pair_car(a);
+            vdlisp::Value av = pair_car(a);
             llvm::Value *v = emitExpr(av);
-            if (!v) return nullptr;
+            if (!v)
+                return nullptr;
             vals.push_back(v);
             a = a.get_pair()->cdr;
         }
         if (opname == "+") {
-            if (vals.size() != 2) return nullptr;
+            if (vals.size() != 2)
+                return nullptr;
             return ir.CreateFAdd(vals[0], vals[1]);
         } else if (opname == "*") {
-            if (vals.size() != 2) return nullptr;
+            if (vals.size() != 2)
+                return nullptr;
             return ir.CreateFMul(vals[0], vals[1]);
         } else if (opname == "-") {
-            if (vals.size() != 2) return nullptr;
+            if (vals.size() != 2)
+                return nullptr;
             return ir.CreateFSub(vals[0], vals[1]);
         } else if (opname == "/") {
-            if (vals.size() != 2) return nullptr;
+            if (vals.size() != 2)
+                return nullptr;
             return ir.CreateFDiv(vals[0], vals[1]);
         }
 
         if (opname == "<" || opname == ">" || opname == "<=" || opname == ">=" || opname == "=") {
-            if (vals.size() != 2) return nullptr;
+            if (vals.size() != 2)
+                return nullptr;
             llvm::Value *L = vals[0];
             llvm::Value *R = vals[1];
             llvm::Value *cmp = nullptr;
-            if (opname == "<")  cmp = ir.CreateFCmpOLT(L, R);
-            if (opname == ">")  cmp = ir.CreateFCmpOGT(L, R);
-            if (opname == "<=") cmp = ir.CreateFCmpOLE(L, R);
-            if (opname == ">=") cmp = ir.CreateFCmpOGE(L, R);
-            if (opname == "=") cmp = ir.CreateFCmpOEQ(L, R);
+            if (opname == "<")
+                cmp = ir.CreateFCmpOLT(L, R);
+            if (opname == ">")
+                cmp = ir.CreateFCmpOGT(L, R);
+            if (opname == "<=")
+                cmp = ir.CreateFCmpOLE(L, R);
+            if (opname == ">=")
+                cmp = ir.CreateFCmpOGE(L, R);
+            if (opname == "=")
+                cmp = ir.CreateFCmpOEQ(L, R);
             return ir.CreateSelect(cmp, llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 1.0), llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0));
-        }       //TODO >2 vals???
+        } // TODO >2 vals???
         const std::string *nm_ptr = op.get_symbol();
         Env *e = func->closure_env;
-        if (e) retain_env(e);
+        if (e)
+            retain_env(e);
         vdlisp::Value found;
         while (e) {
             auto it = e->map.find(*nm_ptr);
-            if (it != e->map.end()) { found = it->second; break; }
+            if (it != e->map.end()) {
+                found = it->second;
+                break;
+            }
             Env *next = e->parent;
-            if (next) retain_env(next);
+            if (next)
+                retain_env(next);
             release_env(e);
             e = next;
         }
-        if (e) release_env(e);
+        if (e)
+            release_env(e);
         if (found && found.get_type() == vdlisp::TFUNC) {
             vdlisp::FuncData *callee_fd = found.get_func();
-            if (!callee_fd) return nullptr;
+            if (!callee_fd)
+                return nullptr;
             std::string callee_name = "jit_fn_" + std::to_string(reinterpret_cast<uintptr_t>(callee_fd));
             llvm::Module *M = F->getParent();
             llvm::Type *dblTy = llvm::Type::getDoubleTy(context);
@@ -330,9 +364,6 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value*
     return nullptr;
 }
 
-
-
-auto JITIREmitter::finalize() -> llvm::Function*
-{
+auto JITIREmitter::finalize() -> llvm::Function * {
     return F;
 }
