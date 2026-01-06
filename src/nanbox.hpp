@@ -118,24 +118,21 @@ namespace vdlisp
 
     // Hot function, inlined for performance. Use branch hint for the common numeric path.
     [[nodiscard]] inline auto get_type() const noexcept -> Type {
-      // Check if it's a canonical NaN (numbers)
-      if (((bits & kNaNMask) != kNaNMask)) [[unlikely]] { // ?????
+      // Fast path for non-NaN values (numbers)
+      if ((bits & kNaNMask) != kNaNMask) [[unlikely]]
         return TNUMBER;
-      }
 
-      // Check the tag for pointer types
-      uint64_t tag = bits & kTagMask;
-      switch (tag) {
-        case kTagNil:    return TNIL;
-        case kTagPair:   return TPAIR;
-        case kTagString: return TSTRING;
-        case kTagSymbol: return TSYMBOL;
-        case kTagFunc:   return TFUNC;
-        case kTagMacro:  return TMACRO;
-        case kTagPrim:   return TPRIM;
-        case kTagCFunc:  return TCFUNC;
-        default:         return TNIL;
-      }
+      // Use the 4-bit tag stored in bits[48:51] to index into a small
+      // constexpr lookup table. This keeps the check compact and avoids
+      // a large switch at runtime.
+      constexpr Type kTagMap[16] = {
+        /*0*/ TNIL, /*1*/ TPAIR, /*2*/ TSTRING, /*3*/ TSYMBOL,
+        /*4*/ TFUNC, /*5*/ TMACRO, /*6*/ TPRIM, /*7*/ TCFUNC,
+        /*8*/ TNIL, /*9*/ TNIL, /*10*/ TNIL, /*11*/ TNIL,
+        /*12*/ TNIL, /*13*/ TNIL, /*14*/ TNIL, /*15*/ TNIL
+      };
+      uint8_t idx = static_cast<uint8_t>((bits >> 48) & 0xF);
+      return kTagMap[idx];
     }
     [[nodiscard]] auto get_number() const noexcept -> double;
     [[nodiscard]] auto get_pair() const noexcept -> PairData*;
@@ -180,6 +177,20 @@ namespace vdlisp
     static void release_payload(Type t, void* p) noexcept;
     static auto is_refcounted(Type t) noexcept -> bool;
 
+    // Template helpers declarations (member templates so definitions can
+    // access private members like `bits` and `release`).
+    template<uint64_t Tag, typename DataT>
+    inline auto get_payload_raw() const noexcept -> DataT*;
+
+    template<uint64_t Tag, typename DataT>
+    inline void set_payload_raw(DataT* ptr) noexcept;
+
+    template<uint64_t Tag, typename Fn>
+    inline auto get_fn_raw() const noexcept -> Fn;
+
+    template<uint64_t Tag, typename Fn>
+    inline void set_fn_raw(Fn fn) noexcept;
+
     // Use NaN-boxing to store all value types in a single 64-bit integer
     // Runtime assumptions are documented in the .cpp implementation.
     uint64_t bits;
@@ -201,63 +212,59 @@ namespace vdlisp
     }
   }
 
-  inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData* { return reinterpret_cast<PairData*>(bits & kPayloadMask); }
-
-  inline void Value::set_pair(PairData* ptr) noexcept {
-    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
-    if (((bits & kTagMask) == kTagPair) && ((bits & kPayloadMask) == newp)) return;
-    release(); bits = kTagPair | newp;
+  // Member template definitions (declared above in the private section).
+  template<uint64_t Tag, typename DataT>
+  inline __attribute__((always_inline)) auto Value::get_payload_raw() const noexcept -> DataT* {
+    return reinterpret_cast<DataT*>(bits & kPayloadMask);
   }
 
-  inline __attribute__((always_inline)) auto Value::get_string() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
-
-  inline void Value::set_string(StringData* ptr) noexcept {
+  template<uint64_t Tag, typename DataT>
+  inline __attribute__((always_inline)) void Value::set_payload_raw(DataT* ptr) noexcept {
     uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
-    if (((bits & kTagMask) == kTagString) && ((bits & kPayloadMask) == newp)) return;
-    release(); bits = kTagString | newp;
+    if (((bits & kTagMask) == Tag) && ((bits & kPayloadMask) == newp)) return;
+    release(); bits = Tag | newp;
   }
 
-  inline __attribute__((always_inline)) auto Value::get_symbol() const noexcept -> std::string* { auto *sd = reinterpret_cast<StringData*>(bits & kPayloadMask); return sd ? &sd->value : nullptr; }
-
-  inline void Value::set_symbol(StringData* ptr) noexcept {
-    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
-    if (((bits & kTagMask) == kTagSymbol) && ((bits & kPayloadMask) == newp)) return;
-    release(); bits = kTagSymbol | newp;
-  }
-
-  inline auto Value::get_func() const noexcept -> FuncData* { return reinterpret_cast<FuncData*>(bits & kPayloadMask); }
-
-  inline void Value::set_func(FuncData* ptr) noexcept {
-    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
-    if (((bits & kTagMask) == kTagFunc) && ((bits & kPayloadMask) == newp)) return;
-    release(); bits = kTagFunc | newp;
-  }
-
-  inline auto Value::get_macro() const noexcept -> MacroData* { return reinterpret_cast<MacroData*>(bits & kPayloadMask); }
-
-  inline void Value::set_macro(MacroData* ptr) noexcept {
-    uint64_t newp = reinterpret_cast<uint64_t>(ptr) & kPayloadMask;
-    if (((bits & kTagMask) == kTagMacro) && ((bits & kPayloadMask) == newp)) return;
-    release(); bits = kTagMacro | newp;
-  }
-
-  inline Prim Value::get_prim() const noexcept {
-    Prim fn;
+  template<uint64_t Tag, typename Fn>
+  inline auto Value::get_fn_raw() const noexcept -> Fn {
+    Fn fn;
     uint64_t payload = bits & kPayloadMask;
     std::memcpy(&fn, &payload, sizeof(fn));
     return fn;
   }
 
-  inline void Value::set_prim(Prim fn) noexcept { release(); uint64_t payload = 0; std::memcpy(&payload, &fn, sizeof(fn)); bits = kTagPrim | (payload & kPayloadMask); }
-
-  inline CFunc Value::get_cfunc() const noexcept {
-    CFunc fn;
-    uint64_t payload = bits & kPayloadMask;
-    std::memcpy(&fn, &payload, sizeof(fn));
-    return fn;
+  template<uint64_t Tag, typename Fn>
+  inline void Value::set_fn_raw(Fn fn) noexcept {
+    release(); uint64_t payload = 0; std::memcpy(&payload, &fn, sizeof(fn)); bits = Tag | (payload & kPayloadMask);
   }
 
-  inline void Value::set_cfunc(CFunc fn) noexcept { release(); uint64_t payload = 0; std::memcpy(&payload, &fn, sizeof(fn)); bits = kTagCFunc | (payload & kPayloadMask); }
+  inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData* { return get_payload_raw<kTagPair, PairData>(); }
+
+  inline void Value::set_pair(PairData* ptr) noexcept { set_payload_raw<kTagPair, PairData>(ptr); }
+
+  inline __attribute__((always_inline)) auto Value::get_string() const noexcept -> std::string* { auto *sd = get_payload_raw<kTagString, StringData>(); return sd ? &sd->value : nullptr; }
+
+  inline void Value::set_string(StringData* ptr) noexcept { set_payload_raw<kTagString, StringData>(ptr); }
+
+  inline __attribute__((always_inline)) auto Value::get_symbol() const noexcept -> std::string* { auto *sd = get_payload_raw<kTagSymbol, StringData>(); return sd ? &sd->value : nullptr; }
+
+  inline void Value::set_symbol(StringData* ptr) noexcept { set_payload_raw<kTagSymbol, StringData>(ptr); }
+
+  inline auto Value::get_func() const noexcept -> FuncData* { return get_payload_raw<kTagFunc, FuncData>(); }
+
+  inline void Value::set_func(FuncData* ptr) noexcept { set_payload_raw<kTagFunc, FuncData>(ptr); }
+
+  inline auto Value::get_macro() const noexcept -> MacroData* { return get_payload_raw<kTagMacro, MacroData>(); }
+
+  inline void Value::set_macro(MacroData* ptr) noexcept { set_payload_raw<kTagMacro, MacroData>(ptr); }
+
+  inline Prim Value::get_prim() const noexcept { return get_fn_raw<kTagPrim, Prim>(); }
+
+  inline void Value::set_prim(Prim fn) noexcept { set_fn_raw<kTagPrim, Prim>(fn); }
+
+  inline CFunc Value::get_cfunc() const noexcept { return get_fn_raw<kTagCFunc, CFunc>(); }
+
+  inline void Value::set_cfunc(CFunc fn) noexcept { set_fn_raw<kTagCFunc, CFunc>(fn); }
 
   inline __attribute__((always_inline)) void Value::retain() const noexcept {
     Type t = get_type();

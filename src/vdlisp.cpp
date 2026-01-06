@@ -362,6 +362,29 @@ static auto eval_args(State &S, const Value &list, Env *env) -> Value
   return head;
 }
 
+// Helper to run a callable and uniformly annotate/rethrow errors with a
+// call-chain entry when a call-site location is available.
+template<typename Fn>
+static auto with_call_chain(State &S, bool have_call_loc, const State::SourceLoc &call_loc, const std::vector<State::SourceLoc> &call_chain_entry, Fn &&fn) -> Value
+{
+  try {
+    return fn();
+  }
+  catch (const ParseError &pe) {
+    if (have_call_loc) {
+      std::vector<State::SourceLoc> new_chain = call_chain_entry;
+      if (!pe.call_chain.empty()) new_chain.insert(new_chain.end(), pe.call_chain.begin(), pe.call_chain.end());
+      throw ParseError(pe.loc, pe.what(), new_chain);
+    }
+    throw;
+  }
+  catch (const std::exception &ex) {
+    if (have_call_loc)
+      throw ParseError(call_loc, ex.what(), call_chain_entry);
+    throw;
+  }
+}
+
 static void bind_params_to_env(
     std::unordered_map<std::string, Value> &out,
     const Value &params,
@@ -499,20 +522,9 @@ auto State::eval(const Value &expr, Env *env) -> Value
         src_call_chain_map[expr.identity_key()] = call_chain_entry;
       }
 
-      Value res;
-      try {
-        res = do_list(body, e);
-      }
-      catch (const ParseError &pe) {
-        if (have_call_loc)
-          throw ParseError(call_loc, pe.what(), call_chain_entry);
-        throw;
-      }
-      catch (const std::exception &ex) {
-        if (have_call_loc)
-          throw ParseError(call_loc, ex.what(), call_chain_entry);
-        throw;
-      }
+      Value res = with_call_chain(*this, have_call_loc, call_loc, call_chain_entry, [&]() -> Value {
+        return do_list(body, e);
+      });
 
       // annotate expanded nodes: set source loc to call site and attach
       // the call-chain (prepending to any existing chain from inner macros)
@@ -643,22 +655,10 @@ auto State::call(const Value &fn, const Value &args, Env *env) -> Value
       call_loc.label = std::string("fn");
       call_chain_entry.push_back(call_loc);
     }
-    try {
+    bool have_call_loc = !call_chain_entry.empty();
+    return with_call_chain(*this, have_call_loc, call_loc, call_chain_entry, [&]() -> Value {
       return do_list(body, e);
-    }
-    catch (const ParseError &pe) {
-      if (!call_chain_entry.empty()) {
-        std::vector<State::SourceLoc> new_chain = call_chain_entry;
-        if (!pe.call_chain.empty()) new_chain.insert(new_chain.end(), pe.call_chain.begin(), pe.call_chain.end());
-        throw ParseError(pe.loc, pe.what(), new_chain);
-      }
-      throw;
-    }
-    catch (const std::exception &ex) {
-      if (!call_chain_entry.empty())
-        throw ParseError(call_loc, ex.what(), call_chain_entry);
-      throw;
-    }
+    });
   }
   throw std::runtime_error("not a function");
 }
