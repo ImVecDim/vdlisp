@@ -20,40 +20,40 @@ struct ParseError : public std::runtime_error {
 // helpers from the interpreter moved out into a separate translation unit
 void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std::string &msg);
 
-auto value_equal(const Value &a, const Value &b) -> bool;
+[[nodiscard]] auto value_equal(const Value &a, const Value &b) -> bool;
 
 // Small helpers (inlined for performance)
-inline __attribute__((always_inline)) auto type_name(const Value &v) -> std::string {
+[[nodiscard]] inline __attribute__((always_inline)) auto type_name(const Value &v) -> std::string {
     if (!v)
         return std::string("nil");
     return v.type_name();
 }
 
-inline __attribute__((always_inline)) auto require_number(const Value &v, const char *who) -> double {
+[[nodiscard]] inline __attribute__((always_inline)) auto require_number(const Value &v, const char *who) -> double {
     if (!v || v.get_type() != TNUMBER)
         throw std::runtime_error(std::string(who) + std::string(": expected number, got ") + std::string(type_name(v)));
     return v.get_number();
 }
 
 // Small helpers to reduce repetitive get_type() checks
-inline __attribute__((always_inline)) auto pair_car(const Value &p) noexcept -> Value {
+[[nodiscard]] inline __attribute__((always_inline)) auto pair_car(const Value &p) noexcept -> Value {
     if (!p)
         return {};
     if (p.get_type() != TPAIR)
         return {};
     return p.get_pair()->car;
 }
-inline __attribute__((always_inline)) auto pair_cdr(const Value &p) noexcept -> Value {
+[[nodiscard]] inline __attribute__((always_inline)) auto pair_cdr(const Value &p) noexcept -> Value {
     if (!p)
         return {};
     if (p.get_type() != TPAIR)
         return {};
     return p.get_pair()->cdr;
 }
-inline __attribute__((always_inline)) auto is_pair(const Value &p) noexcept -> bool {
+[[nodiscard]] inline __attribute__((always_inline)) auto is_pair(const Value &p) noexcept -> bool {
     return p && p.get_type() == TPAIR;
 }
-inline __attribute__((always_inline)) auto is_symbol(const Value &p, const std::string &name) -> bool {
+[[nodiscard]] inline __attribute__((always_inline)) auto is_symbol(const Value &p, const std::string &name) -> bool {
     return p && p.get_type() == TSYMBOL && *p.get_symbol() == name;
 }
 inline __attribute__((always_inline)) void pair_set_car(const Value &p, const Value &v) noexcept {

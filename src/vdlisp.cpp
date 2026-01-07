@@ -260,7 +260,7 @@ auto State::set(const Value &sym, Value v, Env *env) -> Value {
         e = e->parent;
     }
     // not found, bind in current env
-    bind(sym, std::move(v), env);
+    (void)bind(sym, std::move(v), env);
     return v;
 }
 

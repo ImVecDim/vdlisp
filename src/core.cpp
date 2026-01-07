@@ -214,7 +214,7 @@ void register_core(State &S) {
             vars = pair_cdr(vars);
             Value val = pair_car(vars);
             val = S.eval(val, e);
-            S.bind(sym, std::move(val), e);
+            (void)S.bind(sym, std::move(val), e);
             vars = pair_cdr(vars);
         }
         return S.do_list(pair_cdr(args), e);

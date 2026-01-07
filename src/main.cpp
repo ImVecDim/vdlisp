@@ -125,7 +125,7 @@ auto main(int argc, char **argv) -> int {
                 lss << lf.rdbuf();
                 Value le = S.parse_all(lss.str(), langfile.string());
                 if (le)
-                    S.do_list(le, S.global);
+                    (void)S.do_list(le, S.global);
             }
         }
     } catch (...) {

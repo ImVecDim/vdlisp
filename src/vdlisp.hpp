@@ -21,28 +21,28 @@ class State {
     void shutdown_and_purge_pools();
 
     // factory helpers
-    auto make_nil() noexcept -> Value;
-    auto make_number(double n) noexcept -> Value;
-    auto make_string(const std::string &s) -> Value;
-    auto make_symbol(const std::string &s) -> Value;
-    auto make_pair(const Value &car, const Value &cdr) -> Value;
+    [[nodiscard]] auto make_nil() noexcept -> Value;
+    [[nodiscard]] auto make_number(double n) noexcept -> Value;
+    [[nodiscard]] auto make_string(const std::string &s) -> Value;
+    [[nodiscard]] auto make_symbol(const std::string &s) -> Value;
+    [[nodiscard]] auto make_pair(const Value &car, const Value &cdr) -> Value;
     // Overload taking rvalue refs to avoid an extra move when caller can provide temporaries
-    auto make_pair(Value &&car, Value &&cdr) -> Value;
-    auto make_cfunc(const CFunc &fn) noexcept -> Value;
-    auto make_function(const Value &params, const Value &body, Env *env) -> Value;
+    [[nodiscard]] auto make_pair(Value &&car, Value &&cdr) -> Value;
+    [[nodiscard]] auto make_cfunc(const CFunc &fn) noexcept -> Value;
+    [[nodiscard]] auto make_function(const Value &params, const Value &body, Env *env) -> Value;
     // Overload taking rvalue refs for lower-cost construction when possible
-    auto make_function(Value &&params, Value &&body, Env *env) -> Value;
-    auto make_prim(const Prim &fn) noexcept -> Value;
-    auto make_macro(const Value &params, const Value &body, Env *env) -> Value;
-    auto make_macro(Value &&params, Value &&body, Env *env) -> Value;
+    [[nodiscard]] auto make_function(Value &&params, Value &&body, Env *env) -> Value;
+    [[nodiscard]] auto make_prim(const Prim &fn) noexcept -> Value;
+    [[nodiscard]] auto make_macro(const Value &params, const Value &body, Env *env) -> Value;
+    [[nodiscard]] auto make_macro(Value &&params, Value &&body, Env *env) -> Value;
 
     // pooled helpers
-    auto make_pooled_value(Type t) noexcept -> Value;
-    auto make_env(Env *parent = nullptr) -> Env *;
+    [[nodiscard]] auto make_pooled_value(Type t) noexcept -> Value;
+    [[nodiscard]] auto make_env(Env *parent = nullptr) -> Env *;
 
     // convenience helpers for constructing lists
     template <class It>
-    auto make_string_list(It b, It e) -> Value {
+    [[nodiscard]] auto make_string_list(It b, It e) -> Value {
         Value head;
         Value *last = &head;
         for (; b != e; ++b) {
@@ -53,14 +53,14 @@ class State {
         }
         return head;
     }
-    auto make_string_list(int argc, char **argv, int start = 0) -> Value;
+    [[nodiscard]] auto make_string_list(int argc, char **argv, int start = 0) -> Value;
 
     // parsing / eval
-    auto parse(const std::string &src, const std::string &name = "(string)") -> Value;
-    auto parse_all(const std::string &src, const std::string &name = "(string)") -> Value;
-    auto eval(const Value &expr, Env *env) -> Value;
-    auto call(const Value &fn, const Value &args, Env *env = nullptr) -> Value;
-    auto do_list(const Value &body, Env *env) -> Value;
+    [[nodiscard]] auto parse(const std::string &src, const std::string &name = "(string)") -> Value;
+    [[nodiscard]] auto parse_all(const std::string &src, const std::string &name = "(string)") -> Value;
+    [[nodiscard]] auto eval(const Value &expr, Env *env) -> Value;
+    [[nodiscard]] auto call(const Value &fn, const Value &args, Env *env = nullptr) -> Value;
+    [[nodiscard]] auto do_list(const Value &body, Env *env) -> Value;
 
     // source location helpers
     struct SourceLoc {
@@ -85,28 +85,28 @@ class State {
     // cache for required modules: maps canonical filename to result value
     std::unordered_map<std::string, Value> loaded_modules;
     // return the indicated line (1-based) from a source file; returns false if not available
-    auto get_source_line(const std::string &file, size_t line, std::string &out) const -> bool;
+    [[nodiscard]] auto get_source_line(const std::string &file, size_t line, std::string &out) const -> bool;
 
   private:
     // Allocation helpers
-    auto alloc_string(const std::string &s) -> StringData *;
+    [[nodiscard]] auto alloc_string(const std::string &s) -> StringData *;
     // Allocation helpers take rvalue references to avoid an extra move
-    auto alloc_pair(Value &&car, Value &&cdr) -> PairData *;
-    auto alloc_func(Value &&params, Value &&body, Env *env) -> FuncData *;
-    auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData *;
+    [[nodiscard]] auto alloc_pair(Value &&car, Value &&cdr) -> PairData *;
+    [[nodiscard]] auto alloc_func(Value &&params, Value &&body, Env *env) -> FuncData *;
+    [[nodiscard]] auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData *;
 
     // Pooled allocation helpers for Value and Env
-    auto alloc_env() -> Env *;
+    [[nodiscard]] auto alloc_env() -> Env *;
 
   public:
     // helpers
-    auto to_string(const Value &v) -> std::string;
+    [[nodiscard]] auto to_string(const Value &v) -> std::string;
     void register_builtin(const std::string &name, const CFunc &fn);
     void register_prim(const std::string &name, const Prim &fn);
-    auto get_bound(const std::string &name, Env *env) -> Value;
+    [[nodiscard]] auto get_bound(const std::string &name, Env *env) -> Value;
     void bind_global(const std::string &name, Value v);
-    auto bind(const Value &sym, Value v, Env *env) -> Value;
-    auto set(const Value &sym, Value v, Env *env) -> Value;
+    [[nodiscard]] auto bind(const Value &sym, Value v, Env *env) -> Value;
+    [[nodiscard]] auto set(const Value &sym, Value v, Env *env) -> Value;
 };
 
 // Pointer to the currently active State while executing JIT code.
@@ -114,7 +114,7 @@ class State {
 extern State *jit_active_state;
 
 // utility
-auto list_of(State &S, std::initializer_list<Value> items) -> Value;
+[[nodiscard]] auto list_of(State &S, std::initializer_list<Value> items) -> Value;
 
 } // namespace vdlisp
 

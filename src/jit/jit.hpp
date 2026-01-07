@@ -25,9 +25,9 @@ class JITCompiler {
     JITCompiler();
     ~JITCompiler() noexcept;
 
-    auto compileFunctionFromBuilder(const std::function<llvm::Function *(llvm::Module &)> &builder) -> void *;
-    auto getContext() noexcept -> llvm::LLVMContext &;
-    auto compileFuncData(vdlisp::FuncData *func) -> void *;
+    [[nodiscard]] auto compileFunctionFromBuilder(const std::function<llvm::Function *(llvm::Module &)> &builder) -> void *;
+    [[nodiscard]] auto getContext() noexcept -> llvm::LLVMContext &;
+    [[nodiscard]] auto compileFuncData(vdlisp::FuncData *func) -> void *;
     void releaseFunctionCode(void *fnPtr) noexcept;
 
   private:
@@ -39,7 +39,7 @@ class JITCompiler {
 // Global shared JIT instance used by the runtime; tests may rely on this being
 // available to trigger compilation consistently.
 
-extern "C" inline auto VDLISP__call_from_jit(void *funcdata_ptr, double *args, int argc) noexcept -> double {
+extern "C" [[nodiscard]] inline auto VDLISP__call_from_jit(void *funcdata_ptr, double *args, int argc) noexcept -> double {
     try {
         vdlisp::State *S = vdlisp::jit_active_state;
         if (!S)
@@ -71,7 +71,7 @@ extern "C" inline auto VDLISP__call_from_jit(void *funcdata_ptr, double *args, i
 //
 // This is intentionally narrow: JIT currently operates on the numeric fast-path
 // (double in/out). Supporting arbitrary types would require a Value/NaN-box ABI.
-extern "C" inline auto VDLISP__jit_lookup_number(void *env_ptr, const char *name) noexcept -> double {
+extern "C" [[nodiscard]] inline auto VDLISP__jit_lookup_number(void *env_ptr, const char *name) noexcept -> double {
     try {
         if (!name)
             return std::numeric_limits<double>::quiet_NaN();

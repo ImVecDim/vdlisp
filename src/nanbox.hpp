@@ -99,8 +99,8 @@ struct EnvGuard {
         }
         return *this;
     }
-    Env *get() const noexcept { return e_; }
-    Env *release() noexcept {
+    [[nodiscard]] Env *get() const noexcept { return e_; }
+    [[nodiscard]] Env *release() noexcept {
         Env *t = e_;
         e_ = nullptr;
         return t;
