@@ -17,18 +17,7 @@ using namespace vdlisp;
 
 // -------------------- helpers --------------------
 
-template <class It>
-static auto make_string_list_range(State &S, It b, It e) -> Value {
-    Value head;
-    Value *last = &head;
-    for (; b != e; ++b) {
-        Value sv = S.make_string(*b);
-        *last = S.make_pair(std::move(sv), Value());
-        PairData *pd = (*last).get_pair();
-        last = &pd->cdr;
-    }
-    return head;
-}
+// make_string_list helper removed; templated member implemented in `vdlisp.hpp`
 
 #include "core.hpp"
 #include "helpers.hpp"
@@ -235,20 +224,8 @@ auto State::make_macro(Value &&params, Value &&body, Env *env) -> Value {
     return v;
 }
 
-auto State::make_string_list(const std::vector<std::string> &items) -> Value {
-    return make_string_list_range(*this, items.begin(), items.end());
-}
-
 auto State::make_string_list(int argc, char **argv, int start) -> Value {
-    return make_string_list_range(*this, argv + start, argv + argc);
-}
-
-auto State::make_string_list(std::initializer_list<std::string> items) -> Value {
-    return make_string_list_range(*this, items.begin(), items.end());
-}
-
-auto State::make_string_list(std::initializer_list<const char *> items) -> Value {
-    return make_string_list_range(*this, items.begin(), items.end());
+    return make_string_list(argv + start, argv + argc);
 }
 
 void State::register_builtin(const std::string &name, const CFunc &fn) {

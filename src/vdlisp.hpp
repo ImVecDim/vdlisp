@@ -41,10 +41,19 @@ class State {
     auto make_env(Env *parent = nullptr) -> Env *;
 
     // convenience helpers for constructing lists
-    auto make_string_list(const std::vector<std::string> &items) -> Value;
+    template <class It>
+    auto make_string_list(It b, It e) -> Value {
+        Value head;
+        Value *last = &head;
+        for (; b != e; ++b) {
+            Value sv = make_string(std::string(*b));
+            *last = make_pair(std::move(sv), Value());
+            PairData *pd = (*last).get_pair();
+            last = &pd->cdr;
+        }
+        return head;
+    }
     auto make_string_list(int argc, char **argv, int start = 0) -> Value;
-    auto make_string_list(std::initializer_list<std::string> items) -> Value;
-    auto make_string_list(std::initializer_list<const char *> items) -> Value;
 
     // parsing / eval
     auto parse(const std::string &src, const std::string &name = "(string)") -> Value;

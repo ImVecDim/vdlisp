@@ -38,6 +38,18 @@ static auto compare_binary(
     return cmp(a, b) ? S.get_bound("#t", S.global) : Value();
 }
 
+// arithmetic builtins (file-scope wrappers)
+static Value builtin_add(State &S, const Value &args) { return arith_binary(S, args, std::plus<double>{}, "+"); }
+static Value builtin_sub(State &S, const Value &args) { return arith_binary(S, args, std::minus<double>{}, "-"); }
+static Value builtin_mul(State &S, const Value &args) { return arith_binary(S, args, std::multiplies<double>{}, "*"); }
+static Value builtin_div(State &S, const Value &args) { return arith_binary(S, args, [](double a, double b) -> double { if (b == 0.0) throw std::runtime_error("division by zero"); return a / b; }, "/"); }
+
+// comparison builtins (file-scope wrappers)
+static Value builtin_cmp_lt(State &S, const Value &args) { return compare_binary(S, args, std::less<double>{}, "<"); }
+static Value builtin_cmp_gt(State &S, const Value &args) { return compare_binary(S, args, std::greater<double>{}, ">"); }
+static Value builtin_cmp_le(State &S, const Value &args) { return compare_binary(S, args, std::less_equal<double>{}, "<="); }
+static Value builtin_cmp_ge(State &S, const Value &args) { return compare_binary(S, args, std::greater_equal<double>{}, ">="); }
+
 void register_core(State &S) {
     // --- builtins ---
     S.register_builtin("print", [](State &S, const Value &args) -> Value {
@@ -58,34 +70,16 @@ void register_core(State &S) {
     });
 
     using namespace std::placeholders; // for potential future use
-    S.register_builtin("+", [](State &S, const Value &args) -> Value {
-        return arith_binary(S, args, std::plus<double>{}, "+");
-    });
-    S.register_builtin("-", [](State &S, const Value &args) -> Value {
-        return arith_binary(S, args, std::minus<double>{}, "-");
-    });
-    S.register_builtin("*", [](State &S, const Value &args) -> Value {
-        return arith_binary(S, args, std::multiplies<double>{}, "*");
-    });
-    S.register_builtin("/", [](State &S, const Value &args) -> Value {
-        return arith_binary(S, args, [](double a, double b) -> double {
-               if (b == 0.0)
-                   throw std::runtime_error("division by zero");
-               return a / b; }, "/");
-    });
 
-    S.register_builtin("<", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, std::less<double>{}, "<");
-    });
-    S.register_builtin(">", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, std::greater<double>{}, ">");
-    });
-    S.register_builtin("<=", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, std::less_equal<double>{}, "<=");
-    });
-    S.register_builtin(">=", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, std::greater_equal<double>{}, ">=");
-    });
+    S.register_builtin("+", builtin_add);
+    S.register_builtin("-", builtin_sub);
+    S.register_builtin("*", builtin_mul);
+    S.register_builtin("/", builtin_div);
+
+    S.register_builtin("<", builtin_cmp_lt);
+    S.register_builtin(">", builtin_cmp_gt);
+    S.register_builtin("<=", builtin_cmp_le);
+    S.register_builtin(">=", builtin_cmp_ge);
     S.register_builtin("list", [](State &, const Value &args) -> Value {
         return args;
     });
