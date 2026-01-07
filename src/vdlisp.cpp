@@ -178,7 +178,7 @@ auto State::make_string(const std::string &s) -> Value {
 }
 auto State::make_symbol(const std::string &s) -> Value {
     auto it = symbol_intern.find(s);
-    if (it != symbol_intern.end())
+    if (it != symbol_intern.end()) [[likely]]
         return it->second;
     Value v = make_pooled_value(TSYMBOL);
     v.set_symbol(alloc_string(s));
@@ -252,7 +252,7 @@ auto State::set(const Value &sym, Value v, Env *env) -> Value {
     auto e = env;
     while (e) {
         auto it = e->map.find(key);
-        if (it != e->map.end()) {
+        if (it != e->map.end()) [[likely]] {
             // Move into the existing slot to avoid extra retain/release
             it->second = std::move(v);
             return v;
@@ -505,7 +505,7 @@ auto State::eval(const Value &expr, Env *env) -> Value {
 
 auto State::call(const Value &fn, const Value &args, Env *env) -> Value {
     (void)env;
-    if (!fn)
+    if (!fn) [[unlikely]]
         throw std::runtime_error("attempt to call nil");
     if (fn.get_type() == TCFUNC) {
         return fn.get_cfunc()(*this, args);

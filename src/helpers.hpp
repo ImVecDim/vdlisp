@@ -30,7 +30,7 @@ void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std
 }
 
 [[nodiscard]] inline __attribute__((always_inline)) auto require_number(const Value &v, const char *who) -> double {
-    if (!v || v.get_type() != TNUMBER)
+    if (!v || v.get_type() != TNUMBER) [[unlikely]]
         throw std::runtime_error(std::string(who) + std::string(": expected number, got ") + std::string(type_name(v)));
     return v.get_number();
 }

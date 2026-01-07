@@ -44,7 +44,7 @@ static void skip_ws_and_comments(const std::string &src, size_t &pos, size_t &li
 
 static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Value {
     skip_ws_and_comments(src, pos, line, col);
-    if (pos >= src.size())
+    if (pos >= src.size()) [[unlikely]]
         return {};
     char c = src[pos];
     if (c == ')') {
