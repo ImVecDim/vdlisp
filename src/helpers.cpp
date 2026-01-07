@@ -304,10 +304,24 @@ void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std
     }
 }
 
-} // namespace vdlisp
-
-// Move previously-inline helper implementations here
-namespace vdlisp {
+// helper: clear closure_env held by TFUNC/TMACRO Values
+void clear_closure_env(Value &v) noexcept {
+    if (!v)
+        return;
+    if (v.get_type() == TFUNC) {
+        FuncData *fd = v.get_func();
+        if (fd && fd->closure_env) {
+            release_env(fd->closure_env);
+            fd->closure_env = nullptr;
+        }
+    } else if (v.get_type() == TMACRO) {
+        MacroData *md = v.get_macro();
+        if (md && md->closure_env) {
+            release_env(md->closure_env);
+            md->closure_env = nullptr;
+        }
+    }
+}
 
 auto value_equal(const Value &a, const Value &b) -> bool {
     if (a == b)

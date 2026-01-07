@@ -113,19 +113,7 @@ void State::shutdown_and_purge_pools() {
     // Clear closure envs held by functions/macros in the intern table.
     for (auto &kv : symbol_intern) {
         Value &v = kv.second;
-        if (v && v.get_type() == TFUNC) {
-            FuncData *fd = v.get_func();
-            if (fd && fd->closure_env) {
-                release_env(fd->closure_env);
-                fd->closure_env = nullptr;
-            }
-        } else if (v && v.get_type() == TMACRO) {
-            MacroData *md = v.get_macro();
-            if (md && md->closure_env) {
-                release_env(md->closure_env);
-                md->closure_env = nullptr;
-            }
-        }
+        clear_closure_env(v);
         // Reset the Value to trigger release of referenced payloads
         v = Value();
     }
@@ -148,19 +136,7 @@ void State::shutdown_and_purge_pools() {
             // clear function closure_envs for values stored in env maps
             for (auto &mkv : e->map) {
                 Value &val = mkv.second;
-                if (val && val.get_type() == TFUNC) {
-                    FuncData *fd = val.get_func();
-                    if (fd && fd->closure_env) {
-                        release_env(fd->closure_env);
-                        fd->closure_env = nullptr;
-                    }
-                } else if (val && val.get_type() == TMACRO) {
-                    MacroData *md = val.get_macro();
-                    if (md && md->closure_env) {
-                        release_env(md->closure_env);
-                        md->closure_env = nullptr;
-                    }
-                }
+                clear_closure_env(val);
                 val = Value();
             }
             e->map.clear();

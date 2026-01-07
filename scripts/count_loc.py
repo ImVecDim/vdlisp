@@ -65,7 +65,7 @@ def count_file(path: Path) -> int:
 
 
 def main():
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('src')
+    root =  Path('src')
     exts = {'.c', '.cpp', '.h', '.hpp'}
     total = 0
     files = sorted([p for p in root.rglob('*') if p.suffix in exts and p.is_file()])

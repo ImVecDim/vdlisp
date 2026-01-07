@@ -12,10 +12,11 @@ using namespace vdlisp;
 
 namespace vdlisp {
 
+template <typename Op>
 static auto arith_binary(
     State &S,
     const Value &args,
-    double (*op)(double, double),
+    Op op,
     const char *name) -> Value {
     if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
         throw std::runtime_error(std::string(name) + " requires exactly two arguments");
@@ -24,10 +25,11 @@ static auto arith_binary(
     return S.make_number(op(a, b));
 }
 
+template <typename Cmp>
 static auto compare_binary(
     State &S,
     const Value &args,
-    bool (*cmp)(double, double),
+    Cmp cmp,
     const char *name) -> Value {
     if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
         throw std::runtime_error(std::string(name) + " requires exactly two arguments");
@@ -55,33 +57,34 @@ void register_core(State &S) {
         return last;
     });
 
+    using namespace std::placeholders; // for potential future use
     S.register_builtin("+", [](State &S, const Value &args) -> Value {
-        return arith_binary(S, args, [](double a, double b) -> double { return a + b; }, "+");
+        return arith_binary(S, args, std::plus<double>{}, "+");
     });
     S.register_builtin("-", [](State &S, const Value &args) -> Value {
-        return arith_binary(S, args, [](double a, double b) -> double { return a - b; }, "-");
+        return arith_binary(S, args, std::minus<double>{}, "-");
     });
     S.register_builtin("*", [](State &S, const Value &args) -> Value {
-        return arith_binary(S, args, [](double a, double b) -> double { return a * b; }, "*");
+        return arith_binary(S, args, std::multiplies<double>{}, "*");
     });
     S.register_builtin("/", [](State &S, const Value &args) -> Value {
         return arith_binary(S, args, [](double a, double b) -> double {
                if (b == 0.0)
-                 throw std::runtime_error("division by zero");
+                   throw std::runtime_error("division by zero");
                return a / b; }, "/");
     });
 
     S.register_builtin("<", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, [](double a, double b) -> bool { return a < b; }, "<");
+        return compare_binary(S, args, std::less<double>{}, "<");
     });
     S.register_builtin(">", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, [](double a, double b) -> bool { return a > b; }, ">");
+        return compare_binary(S, args, std::greater<double>{}, ">");
     });
     S.register_builtin("<=", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, [](double a, double b) -> bool { return a <= b; }, "<=");
+        return compare_binary(S, args, std::less_equal<double>{}, "<=");
     });
     S.register_builtin(">=", [](State &S, const Value &args) -> Value {
-        return compare_binary(S, args, [](double a, double b) -> bool { return a >= b; }, ">=");
+        return compare_binary(S, args, std::greater_equal<double>{}, ">=");
     });
     S.register_builtin("list", [](State &, const Value &args) -> Value {
         return args;

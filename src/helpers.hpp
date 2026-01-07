@@ -71,6 +71,9 @@ inline __attribute__((always_inline)) void pair_set_cdr(const Value &p, const Va
     p.get_pair()->cdr = v;
 }
 
+// Clear closure_env held by TFUNC/TMACRO Values: release the Env and null the pointer.
+void clear_closure_env(Value &v) noexcept;
+
 } // namespace vdlisp
 
 #endif
