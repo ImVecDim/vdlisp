@@ -45,7 +45,7 @@ auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value * {
         return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "cond_cont", F);
     std::vector<std::pair<llvm::Value *, llvm::BasicBlock *>> incoming;
-    
+
     vdlisp::Value walk = clauses;
     int idx = 0;
 
@@ -59,51 +59,53 @@ auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value * {
         vdlisp::Value clause = pair_car(walk);
         vdlisp::Value test = (is_pair(clause)) ? pair_car(clause) : vdlisp::Value();
         vdlisp::Value body = (is_pair(clause)) ? pair_cdr(clause) : vdlisp::Value();
-        
+
         // Emit test
         llvm::Value *condv = emitExpr(test);
-        if (!condv) return nullptr;
-        
+        if (!condv)
+            return nullptr;
+
         llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
         llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
-        
+
         llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "cond_body" + std::to_string(idx), F);
         llvm::BasicBlock *nextBB = llvm::BasicBlock::Create(context, "cond_next" + std::to_string(idx), F);
-        
+
         ir.CreateCondBr(is_true, bodyBB, nextBB);
-        
+
         // Emit body
         ir.SetInsertPoint(bodyBB);
         llvm::Value *last = nullptr;
         while (body) {
             vdlisp::Value ex = pair_car(body);
             llvm::Value *v = emitExpr(ex);
-            if (!v) return nullptr;
+            if (!v)
+                return nullptr;
             last = v;
             body = body.get_pair()->cdr;
         }
         if (!last)
             last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-        
+
         ir.CreateBr(contBB);
         incoming.push_back({last, ir.GetInsertBlock()});
-        
+
         // Move to next
         ir.SetInsertPoint(nextBB);
         walk = walk.get_pair()->cdr;
         ++idx;
     }
-    
+
     // Fallthrough case
     llvm::Value *defVal = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     ir.CreateBr(contBB);
     incoming.push_back({defVal, ir.GetInsertBlock()});
-    
+
     ir.SetInsertPoint(contBB);
     llvm::PHINode *phi = ir.CreatePHI(llvm::Type::getDoubleTy(context), (unsigned)incoming.size());
     for (auto &p : incoming)
         phi->addIncoming(p.first, p.second);
-        
+
     return phi;
 }
 auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value * {

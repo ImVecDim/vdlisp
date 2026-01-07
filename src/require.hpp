@@ -9,7 +9,7 @@
 
 namespace vdlisp {
 
-__attribute__((always_inline)) inline void register_require(State &S) {
+inline __attribute__((always_inline)) void register_require(State &S) {
     // require: load a file and return its value; cache results using canonical paths and provide
     // better diagnostic info on failure
     S.register_builtin("require", [](State &S, const Value &args) -> Value {

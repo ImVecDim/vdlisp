@@ -42,7 +42,9 @@ static auto compare_binary(
 static Value builtin_add(State &S, const Value &args) { return arith_binary(S, args, std::plus<double>{}, "+"); }
 static Value builtin_sub(State &S, const Value &args) { return arith_binary(S, args, std::minus<double>{}, "-"); }
 static Value builtin_mul(State &S, const Value &args) { return arith_binary(S, args, std::multiplies<double>{}, "*"); }
-static Value builtin_div(State &S, const Value &args) { return arith_binary(S, args, [](double a, double b) -> double { if (b == 0.0) throw std::runtime_error("division by zero"); return a / b; }, "/"); }
+static Value builtin_div(State &S, const Value &args) {
+    return arith_binary(S, args, [](double a, double b) -> double { if (b == 0.0) throw std::runtime_error("division by zero"); return a / b; }, "/");
+}
 
 // comparison builtins (file-scope wrappers)
 static Value builtin_cmp_lt(State &S, const Value &args) { return compare_binary(S, args, std::less<double>{}, "<"); }
@@ -69,11 +71,16 @@ void register_core(State &S) {
         return last;
     });
 
-    struct { const char* n; Value (*f)(State&, const Value&); } ops[] = {
-        {"+", builtin_add}, {"-", builtin_sub}, {"*", builtin_mul}, {"/", builtin_div},
-        {"<", builtin_cmp_lt}, {">", builtin_cmp_gt}, {"<=", builtin_cmp_le}, {">=", builtin_cmp_ge}
-    };
-    for (auto &op : ops) S.register_builtin(op.n, op.f);
+    struct {
+        const char *n;
+        Value (*f)(State &, const Value &);
+    } ops[] = {
+        {"+", builtin_add}, {"-", builtin_sub}, //
+        {"*", builtin_mul}, {"/", builtin_div}, //
+        {"<", builtin_cmp_lt}, {">", builtin_cmp_gt}, //
+        {"<=", builtin_cmp_le}, {">=", builtin_cmp_ge}};
+    for (auto &op : ops)
+        S.register_builtin(op.n, op.f);
     S.register_builtin("list", [](State &, const Value &args) -> Value {
         return args;
     });

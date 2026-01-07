@@ -68,7 +68,7 @@ auto JITCompiler::compileFunctionFromBuilder(const std::function<llvm::Function 
     return ptr;
 }
 
-void JITCompiler::releaseFunctionCode(void *fnPtr) {
+void JITCompiler::releaseFunctionCode(void *fnPtr) noexcept {
     if (!fnPtr)
         return;
     auto it = module_for_fn.find(fnPtr);

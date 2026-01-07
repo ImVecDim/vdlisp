@@ -37,12 +37,8 @@ enum Type {
 
 // Forward declarations needed for the implementation
 namespace detail {
-inline constexpr auto double_to_bits(double value) noexcept -> uint64_t {
-    return std::bit_cast<uint64_t>(value);
-}
-inline constexpr auto bits_to_double(uint64_t bits) noexcept -> double {
-    return std::bit_cast<double>(bits);
-}
+inline constexpr auto double_to_bits(double value) noexcept -> uint64_t { return std::bit_cast<uint64_t>(value); }
+inline constexpr auto bits_to_double(uint64_t bits) noexcept -> double { return std::bit_cast<double>(bits); }
 } // namespace detail
 
 struct RcBase {
@@ -54,15 +50,9 @@ struct RcBase {
     size_t refs_{1};
 
   public:
-    inline __attribute__((always_inline)) void inc_ref() noexcept {
-        ++refs_;
-    }
-    inline __attribute__((always_inline)) size_t dec_ref() noexcept {
-        return --refs_;
-    }
-    inline __attribute__((always_inline)) size_t ref_count() const noexcept {
-        return refs_;
-    }
+    inline __attribute__((always_inline)) void inc_ref() noexcept { ++refs_; }
+    inline __attribute__((always_inline)) size_t dec_ref() noexcept { return --refs_; }
+    inline __attribute__((always_inline)) size_t ref_count() const noexcept { return refs_; }
 };
 
 class StringData : public RcBase {
@@ -84,9 +74,7 @@ inline __attribute__((always_inline)) void retain_env(Env *e) noexcept {
         e->inc_ref();
 }
 inline __attribute__((always_inline)) void release_env(Env *e) noexcept {
-    if (!e)
-        return;
-    if (e->dec_ref() == 0)
+    if (e && e->dec_ref() == 0)
         delete e;
 }
 
@@ -111,9 +99,7 @@ struct EnvGuard {
         }
         return *this;
     }
-    Env *get() const noexcept {
-        return e_;
-    }
+    Env *get() const noexcept { return e_; }
     Env *release() noexcept {
         Env *t = e_;
         e_ = nullptr;
@@ -149,9 +135,9 @@ class Value {
     Value(Value &&other) noexcept;
     ~Value();
 
-    auto operator=(const Value &other) -> Value &;
+    auto operator=(const Value &other) noexcept -> Value &;
     auto operator=(Value &&other) noexcept -> Value &;
-    auto operator=(std::nullptr_t) -> Value &;
+    auto operator=(std::nullptr_t) noexcept -> Value &;
 
     // Getters
 
@@ -185,27 +171,13 @@ class Value {
     //[[nodiscard]] inline auto operator->() const -> const Value* { return this; }
     //[[nodiscard]] inline auto get() -> Value* { return this; }
     //[[nodiscard]] inline auto get() const -> const Value* { return this; }
-    [[nodiscard]] explicit operator bool() const {
-        return get_type() != TNIL;
-    }
-    [[nodiscard]] auto operator==(std::nullptr_t) const -> bool {
-        return get_type() == TNIL;
-    }
-    [[nodiscard]] auto operator!=(std::nullptr_t) const -> bool {
-        return get_type() != TNIL;
-    }
-    [[nodiscard]] auto operator==(const Value &rhs) const -> bool {
-        return bits == rhs.bits;
-    }
-    [[nodiscard]] auto operator!=(const Value &rhs) const -> bool {
-        return bits != rhs.bits;
-    }
-    [[nodiscard]] auto identity_key() const noexcept -> uint64_t {
-        return bits;
-    }
-    void reset() {
-        *this = Value();
-    }
+    [[nodiscard]] explicit operator bool() const noexcept { return get_type() != TNIL; }
+    [[nodiscard]] auto operator==(std::nullptr_t) const noexcept -> bool { return get_type() == TNIL; }
+    [[nodiscard]] auto operator!=(std::nullptr_t) const noexcept -> bool { return get_type() != TNIL; }
+    [[nodiscard]] auto operator==(const Value &rhs) const noexcept -> bool { return bits == rhs.bits; }
+    [[nodiscard]] auto operator!=(const Value &rhs) const noexcept -> bool { return bits != rhs.bits; }
+    [[nodiscard]] auto identity_key() const noexcept -> uint64_t { return bits; }
+    void reset() noexcept { *this = Value(); }
 
     // High-level helpers
     [[nodiscard]] auto type_name() const -> std::string;
@@ -224,9 +196,7 @@ class Value {
   private:
     void retain() const noexcept;
     void release() noexcept;
-    [[nodiscard]] auto payload_ptr() const noexcept -> void * {
-        return reinterpret_cast<void *>(bits & kPayloadMask);
-    }
+    [[nodiscard]] auto payload_ptr() const noexcept -> void * { return reinterpret_cast<void *>(bits & kPayloadMask); }
     static void retain_payload(Type t, void *p) noexcept;
     static void release_payload(Type t, void *p) noexcept;
     static auto is_refcounted(Type t) noexcept -> bool;
@@ -261,16 +231,13 @@ inline auto Value::get_number() const noexcept -> double {
 inline void Value::set_number(double value) noexcept {
     release();
     std::memcpy(&bits, &value, sizeof(bits));
-    if ((bits & kNaNMask) == kNaNMask) {
+    if ((bits & kNaNMask) == kNaNMask)
         bits = 0;
-    }
 }
 
 // Member template definitions (declared above in the private section).
 template <uint64_t Tag, typename DataT>
-inline __attribute__((always_inline)) auto Value::get_payload_raw() const noexcept -> DataT * {
-    return reinterpret_cast<DataT *>(bits & kPayloadMask);
-}
+inline __attribute__((always_inline)) auto Value::get_payload_raw() const noexcept -> DataT * { return reinterpret_cast<DataT *>(bits & kPayloadMask); }
 
 template <uint64_t Tag, typename DataT>
 inline __attribute__((always_inline)) void Value::set_payload_raw(DataT *ptr) noexcept {
@@ -297,63 +264,32 @@ inline void Value::set_fn_raw(Fn fn) noexcept {
     bits = Tag | (payload & kPayloadMask);
 }
 
-inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData * {
-    return get_payload_raw<kTagPair, PairData>();
-}
-
-inline void Value::set_pair(PairData *ptr) noexcept {
-    set_payload_raw<kTagPair, PairData>(ptr);
-}
+inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData * { return get_payload_raw<kTagPair, PairData>(); }
+inline void Value::set_pair(PairData *ptr) noexcept { set_payload_raw<kTagPair, PairData>(ptr); }
 
 inline __attribute__((always_inline)) auto Value::get_string() const noexcept -> std::string * {
     auto *sd = get_payload_raw<kTagString, StringData>();
     return sd ? &sd->value : nullptr;
 }
-
-inline void Value::set_string(StringData *ptr) noexcept {
-    set_payload_raw<kTagString, StringData>(ptr);
-}
+inline void Value::set_string(StringData *ptr) noexcept { set_payload_raw<kTagString, StringData>(ptr); }
 
 inline __attribute__((always_inline)) auto Value::get_symbol() const noexcept -> std::string * {
     auto *sd = get_payload_raw<kTagSymbol, StringData>();
     return sd ? &sd->value : nullptr;
 }
+inline void Value::set_symbol(StringData *ptr) noexcept { set_payload_raw<kTagSymbol, StringData>(ptr); }
 
-inline void Value::set_symbol(StringData *ptr) noexcept {
-    set_payload_raw<kTagSymbol, StringData>(ptr);
-}
+inline auto Value::get_func() const noexcept -> FuncData * { return get_payload_raw<kTagFunc, FuncData>(); }
+inline void Value::set_func(FuncData *ptr) noexcept { set_payload_raw<kTagFunc, FuncData>(ptr); }
 
-inline auto Value::get_func() const noexcept -> FuncData * {
-    return get_payload_raw<kTagFunc, FuncData>();
-}
+inline auto Value::get_macro() const noexcept -> MacroData * { return get_payload_raw<kTagMacro, MacroData>(); }
+inline void Value::set_macro(MacroData *ptr) noexcept { set_payload_raw<kTagMacro, MacroData>(ptr); }
 
-inline void Value::set_func(FuncData *ptr) noexcept {
-    set_payload_raw<kTagFunc, FuncData>(ptr);
-}
+inline Prim Value::get_prim() const noexcept { return get_fn_raw<kTagPrim, Prim>(); }
+inline void Value::set_prim(Prim fn) noexcept { set_fn_raw<kTagPrim, Prim>(fn); }
 
-inline auto Value::get_macro() const noexcept -> MacroData * {
-    return get_payload_raw<kTagMacro, MacroData>();
-}
-
-inline void Value::set_macro(MacroData *ptr) noexcept {
-    set_payload_raw<kTagMacro, MacroData>(ptr);
-}
-
-inline Prim Value::get_prim() const noexcept {
-    return get_fn_raw<kTagPrim, Prim>();
-}
-
-inline void Value::set_prim(Prim fn) noexcept {
-    set_fn_raw<kTagPrim, Prim>(fn);
-}
-
-inline CFunc Value::get_cfunc() const noexcept {
-    return get_fn_raw<kTagCFunc, CFunc>();
-}
-
-inline void Value::set_cfunc(CFunc fn) noexcept {
-    set_fn_raw<kTagCFunc, CFunc>(fn);
-}
+inline CFunc Value::get_cfunc() const noexcept { return get_fn_raw<kTagCFunc, CFunc>(); }
+inline void Value::set_cfunc(CFunc fn) noexcept { set_fn_raw<kTagCFunc, CFunc>(fn); }
 
 inline __attribute__((always_inline)) void Value::retain() const noexcept {
     Type t = get_type();
@@ -388,10 +324,8 @@ inline auto Value::is_refcounted(Type t) noexcept -> bool {
 }
 
 inline __attribute__((always_inline)) void Value::retain_payload(Type t, void *p) noexcept {
-    if (!p)
-        return;
-    auto *rc = static_cast<RcBase *>(p);
-    rc->inc_ref();
+    if (p)
+        static_cast<RcBase *>(p)->inc_ref();
 }
 
 class PairData : public RcBase {

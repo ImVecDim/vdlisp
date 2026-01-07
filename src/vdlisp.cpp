@@ -75,7 +75,7 @@ auto State::alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData * {
 }
 
 // Value and Env allocators
-auto State::make_pooled_value(Type t) -> Value {
+auto State::make_pooled_value(Type t) noexcept -> Value {
     return Value(t);
 }
 
@@ -163,10 +163,10 @@ void State::shutdown_and_purge_pools() {
 // code needs to fall back to the interpreter.
 vdlisp::State *vdlisp::jit_active_state = nullptr;
 
-auto State::make_nil() -> Value {
+auto State::make_nil() noexcept -> Value {
     return {};
 }
-auto State::make_number(double n) -> Value {
+auto State::make_number(double n) noexcept -> Value {
     Value v = make_pooled_value(TNUMBER);
     v.set_number(n);
     return v;
@@ -195,12 +195,12 @@ auto State::make_pair(Value &&car, Value &&cdr) -> Value {
     v.set_pair(alloc_pair(std::move(car), std::move(cdr)));
     return v;
 }
-auto State::make_cfunc(const CFunc &fn) -> Value {
+auto State::make_cfunc(const CFunc &fn) noexcept -> Value {
     Value v = make_pooled_value(TCFUNC);
     v.set_cfunc(fn);
     return v;
 }
-auto State::make_prim(const Prim &fn) -> Value {
+auto State::make_prim(const Prim &fn) noexcept -> Value {
     Value v = make_pooled_value(TPRIM);
     v.set_prim(fn);
     return v;

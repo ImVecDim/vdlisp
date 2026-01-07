@@ -68,7 +68,7 @@ Value::~Value() {
 
 #include <utility>
 
-auto Value::operator=(const Value &other) -> Value & {
+auto Value::operator=(const Value &other) noexcept -> Value & {
     if (this == &other)
         return *this;
     // If both Values already contain the same bits (same payload/tag),
@@ -90,7 +90,7 @@ auto Value::operator=(Value &&other) noexcept -> Value & {
     return *this;
 }
 
-auto Value::operator=(std::nullptr_t) -> Value & {
+auto Value::operator=(std::nullptr_t) noexcept -> Value & {
     release();
     bits = kTagNil;
     return *this;

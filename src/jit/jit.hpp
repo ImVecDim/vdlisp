@@ -28,7 +28,7 @@ class JITCompiler {
     auto compileFunctionFromBuilder(const std::function<llvm::Function *(llvm::Module &)> &builder) -> void *;
     auto getContext() noexcept -> llvm::LLVMContext &;
     auto compileFuncData(vdlisp::FuncData *func) -> void *;
-    void releaseFunctionCode(void *fnPtr);
+    void releaseFunctionCode(void *fnPtr) noexcept;
 
   private:
     llvm::LLVMContext context;
