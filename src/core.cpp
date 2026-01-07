@@ -69,17 +69,11 @@ void register_core(State &S) {
         return last;
     });
 
-    using namespace std::placeholders; // for potential future use
-
-    S.register_builtin("+", builtin_add);
-    S.register_builtin("-", builtin_sub);
-    S.register_builtin("*", builtin_mul);
-    S.register_builtin("/", builtin_div);
-
-    S.register_builtin("<", builtin_cmp_lt);
-    S.register_builtin(">", builtin_cmp_gt);
-    S.register_builtin("<=", builtin_cmp_le);
-    S.register_builtin(">=", builtin_cmp_ge);
+    struct { const char* n; Value (*f)(State&, const Value&); } ops[] = {
+        {"+", builtin_add}, {"-", builtin_sub}, {"*", builtin_mul}, {"/", builtin_div},
+        {"<", builtin_cmp_lt}, {">", builtin_cmp_gt}, {"<=", builtin_cmp_le}, {">=", builtin_cmp_ge}
+    };
+    for (auto &op : ops) S.register_builtin(op.n, op.f);
     S.register_builtin("list", [](State &, const Value &args) -> Value {
         return args;
     });
@@ -95,7 +89,6 @@ void register_core(State &S) {
     S.register_builtin("error", [](State &S, const Value &args) -> Value {
         std::string msg = pair_car(args) ? S.to_string(pair_car(args)) : std::string("error");
         throw std::runtime_error(msg);
-        return {};
     });
 
     S.register_builtin("cons", [](State &S, const Value &args) -> Value {

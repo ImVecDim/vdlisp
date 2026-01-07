@@ -43,71 +43,67 @@ auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst * {
 auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value * {
     if (!clauses)
         return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    std::vector<BasicBlock *> testBBs;
-    std::vector<BasicBlock *> bodyBBs;
-    std::vector<vdlisp::Value> tests;
-    std::vector<vdlisp::Value> bodies;
-    int idx = 0;
+    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "cond_cont", F);
+    std::vector<std::pair<llvm::Value *, llvm::BasicBlock *>> incoming;
+    
     vdlisp::Value walk = clauses;
+    int idx = 0;
+
+    // Handle empty condition case if needed, though usually walk is not null if called correctly
+    if (!walk) {
+        contBB->eraseFromParent();
+        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    }
+
     while (walk) {
         vdlisp::Value clause = pair_car(walk);
         vdlisp::Value test = (is_pair(clause)) ? pair_car(clause) : vdlisp::Value();
         vdlisp::Value body = (is_pair(clause)) ? pair_cdr(clause) : vdlisp::Value();
-        testBBs.push_back(BasicBlock::Create(context, "cond_test" + std::to_string(idx), F));
-        bodyBBs.push_back(BasicBlock::Create(context, "cond_body" + std::to_string(idx), F));
-        tests.push_back(test);
-        bodies.push_back(body);
-        walk = walk.get_pair()->cdr;
-        ++idx;
-    }
-    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "cond_cont", F);
-    if (testBBs.empty())
-        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    ir.CreateBr(testBBs[0]);
-
-    for (size_t i = 0; i < testBBs.size(); ++i) {
-        ir.SetInsertPoint(testBBs[i]);
-        vdlisp::Value test = tests[i];
+        
+        // Emit test
         llvm::Value *condv = emitExpr(test);
-        if (!condv)
-            return nullptr;
+        if (!condv) return nullptr;
+        
         llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
         llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
-        BasicBlock *next = (i + 1 < testBBs.size()) ? testBBs[i + 1] : contBB;
-        ir.CreateCondBr(is_true, bodyBBs[i], next);
-    }
-
-    std::vector<llvm::Value *> vals;
-    for (size_t i = 0; i < bodyBBs.size(); ++i) {
-        ir.SetInsertPoint(bodyBBs[i]);
-        vdlisp::Value b = bodies[i];
+        
+        llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "cond_body" + std::to_string(idx), F);
+        llvm::BasicBlock *nextBB = llvm::BasicBlock::Create(context, "cond_next" + std::to_string(idx), F);
+        
+        ir.CreateCondBr(is_true, bodyBB, nextBB);
+        
+        // Emit body
+        ir.SetInsertPoint(bodyBB);
         llvm::Value *last = nullptr;
-        while (b) {
-            vdlisp::Value ex = pair_car(b);
+        while (body) {
+            vdlisp::Value ex = pair_car(body);
             llvm::Value *v = emitExpr(ex);
-            if (!v)
-                return nullptr;
+            if (!v) return nullptr;
             last = v;
-            b = b.get_pair()->cdr;
+            body = body.get_pair()->cdr;
         }
         if (!last)
             last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+        
         ir.CreateBr(contBB);
-        vals.push_back(last);
+        incoming.push_back({last, ir.GetInsertBlock()});
+        
+        // Move to next
+        ir.SetInsertPoint(nextBB);
+        walk = walk.get_pair()->cdr;
+        ++idx;
     }
-
+    
+    // Fallthrough case
+    llvm::Value *defVal = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+    ir.CreateBr(contBB);
+    incoming.push_back({defVal, ir.GetInsertBlock()});
+    
     ir.SetInsertPoint(contBB);
-    llvm::PHINode *phi = ir.CreatePHI(llvm::Type::getDoubleTy(context), (int)vals.size());
-    for (size_t i = 0; i < vals.size(); ++i)
-        phi->addIncoming(vals[i], bodyBBs[i]);
-    // If the test chain can fall through to the continuation without
-    // selecting a body (i.e. last test false), add an incoming value from
-    // the last test block representing `nil`/false (0.0) so the PHI node
-    // has an entry for that predecessor and the IR is well-formed.
-    if (!testBBs.empty()) {
-        llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-        phi->addIncoming(zero, testBBs.back());
-    }
+    llvm::PHINode *phi = ir.CreatePHI(llvm::Type::getDoubleTy(context), (unsigned)incoming.size());
+    for (auto &p : incoming)
+        phi->addIncoming(p.first, p.second);
+        
     return phi;
 }
 auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value * {
