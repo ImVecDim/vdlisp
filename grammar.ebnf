@@ -1,0 +1,51 @@
+; concise, precise EBNF for vdlisp (lexical + syntactic rules)
+
+program        = { expression } ; zero or more expressions
+
+expression     = atom | list | quoted | quasiquoted | unquoted
+
+; --- atoms ---
+atom           = number | string | symbol | nil
+
+nil            = "nil"
+true            = "#t"
+
+; numbers: match C's strtod-style floats (simplified here)
+number         = [ "+" | "-" ] , ( DIGITS , [ "." , DIGITS ] | "." , DIGITS ) , [ EXP ]
+EXP            = ( "e" | "E" ) , [ "+" | "-" ] , DIGITS
+DIGITS         = DIGIT , { DIGIT }
+DIGIT          = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+
+; strings with common escapes
+string         = '"' , { string_char } , '"'
+string_char    = unescaped | escape_seq
+unescaped      = ? any character except '"' '\\' and newline ?
+escape_seq     = '\\' , ( 'n' | 't' | 'r' | '\\' | '"' )
+
+; symbol: any non-delimiter token not recognized as number or nil
+symbol         = SYMBOL_START , { SYMBOL_CHAR }
+SYMBOL_START   = ? any char except whitespace or ( ) ' ` , " ; ?
+SYMBOL_CHAR    = SYMBOL_START
+
+; --- shortcuts ---
+quoted         = "'" , expression  ; (quote ...)
+quasiquoted    = "`" , expression  ; (quasiquote ...)
+unquoted       = "," , expression  ; (unquote ...)
+
+; --- lists ---
+list           = "(" , [ list_contents ] , ")"
+list_contents  = sequence | dotted
+sequence       = expression , { expression }
+dotted         = { expression } , "." , expression
+
+; --- whitespace and comments (lexical) ---
+WHITESPACE     = { " " | "\t" | "\r" | "\n" }
+comment        = ";" , { ? any char except newline ? } , ( "\n" | EOF )
+
+DELIMITER      = "(" | ")" | '\'' | '`' | ',' | '"' | ';'
+
+/*
+ Tokenization note: input is split by WHITESPACE or DELIMITER characters. Parser chooses
+ number vs symbol by attempting numeric parse (as implemented by strtod in source).
+*/
+

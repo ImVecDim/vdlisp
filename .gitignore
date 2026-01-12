@@ -1,0 +1,63 @@
+# Build directories
+/build/
+/build_asan/
+*/build/
+/build_debug/
+/tmp/
+
+# Executables
+vdlisp
+*.exe
+*.out
+
+# Object files and static libs
+*.o
+*.obj
+*.lo
+*.a
+*.la
+
+# CMake generated files
+/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+
+# compile commands (generated)
+compile_commands.json
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Editor temporary files
+*~
+*.swp
+*.swo
+*.swn
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs and profiling
+perf*
+
+# Coverage and sanitizer outputs
+*.gcda
+*.gcno
+coverage/
+
+# macOS
+.DS_Store
+
+# Misc
+# history, temp, backup
+*.history
+*.tmp
+
+asan*
