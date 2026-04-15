@@ -7,7 +7,17 @@
 
 using namespace vdlisp;
 
+namespace {
+
+// 对外显示时，热点数值函数如果已经编译或足够热，就显示成 jit_func。
+static auto shows_as_jit_func(const FuncData *fd) -> bool {
+    return fd && (fd->compiled_code || fd->num_call_count > 3);
+}
+
+} // namespace
+
 Env::~Env() noexcept {
+    // 父环境由子环境持有一份引用，这里负责对称释放。
     if (parent) {
         release_env(parent);
         parent = nullptr;
@@ -20,6 +30,7 @@ Env::~Env() noexcept {
 // -------------------- Value implementation --------------------
 
 Value::Value(Type t) {
+    // 构造时只建立类型标签，不在这里分配实际 payload。
     switch (t) {
     case TNIL:
         bits = kTagNil;
@@ -71,8 +82,7 @@ Value::~Value() {
 auto Value::operator=(const Value &other) noexcept -> Value & {
     if (this == &other)
         return *this;
-    // If both Values already contain the same bits (same payload/tag),
-    // there's no need to change reference counts or modify state.
+    // bits 完全相同代表底层对象相同，无需动引用计数。
     if (bits == other.bits)
         return *this;
     other.retain();
@@ -96,18 +106,8 @@ auto Value::operator=(std::nullptr_t) noexcept -> Value & {
     return *this;
 }
 
-// Retrieve the function data from the Value object and support JIT trigger.
-//
-// Behavior:
-// - Each call increments `FuncData::call_count`.
-// - When `call_count` exceeds a simple threshold (10 here) and the function
-//   has not yet been compiled, we request JIT compilation.
-// - The JIT integration here is demonstrative: it creates a placeholder
-//   `llvm::Function` and calls `JITCompiler::compileFunction`. A real
-//   implementation should generate proper IR that matches the function body
-//   and calling convention.
-
 void Value::release_payload(Type t, void *p) noexcept {
+    // 真正的对象析构集中在这里，确保引用计数降到 0 后按类型清理。
     if (!p)
         return;
     auto *rc = static_cast<RcBase *>(p);
@@ -126,6 +126,7 @@ void Value::release_payload(Type t, void *p) noexcept {
         break;
     case TFUNC: {
         auto *fd = static_cast<FuncData *>(p);
+        // 函数值销毁时还要回收它占用的机器码与闭包环境。
         if (fd->compiled_code) {
             global_jit.releaseFunctionCode(fd->compiled_code);
             fd->compiled_code = nullptr;
@@ -147,6 +148,7 @@ void Value::release_payload(Type t, void *p) noexcept {
 
 // High-level helpers centralized on Value
 auto Value::type_name() const -> std::string {
+    // 对函数额外区分 jit_func，便于调试当前是否已经进入热点编译。
     switch (get_type()) {
     case TNIL:
         return "nil";
@@ -159,9 +161,9 @@ auto Value::type_name() const -> std::string {
     case TSYMBOL:
         return "symbol";
     case TFUNC: {
-        // Inspect the stored FuncData pointer without triggering JIT or side-effects
+        // 这里只读取元数据，不触发任何额外行为。
         auto *fd = reinterpret_cast<FuncData *>(bits & kPayloadMask);
-        return (fd && fd->compiled_code) ? "jit_func" : "function";
+        return shows_as_jit_func(fd) ? "jit_func" : "function";
     }
     case TMACRO:
         return "macro";
@@ -187,7 +189,7 @@ auto Value::to_repr(State &S) const -> std::string {
         return *get_symbol();
     case TPAIR: {
         std::string s = "(";
-        // print first element
+        // pair 既用于普通 cons cell，也用于打印形如 (a b . c) 的表结构。
         PairData *pd = get_pair();
         if (pd) {
             s += pd->car ? pd->car.to_repr(S) : std::string("nil");
@@ -214,7 +216,7 @@ auto Value::to_repr(State &S) const -> std::string {
         return "<prim>";
     case TFUNC: {
         auto *fd = reinterpret_cast<FuncData *>(bits & kPayloadMask);
-        return (fd && fd->compiled_code) ? "<jit_func>" : "<function>";
+        return shows_as_jit_func(fd) ? "<jit_func>" : "<function>";
     }
     default:
         return "<?>";

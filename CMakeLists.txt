@@ -68,6 +68,14 @@ add_executable(vdlisp ${VDL_SOURCES})
 # Force C++20 even if external flags add a different -std=...
 target_compile_options(vdlisp PRIVATE -std=c++20)
 
+# 运行二进制时会按相对路径查找 scripts/lang_basics.lisp，构建后把脚本复制到产物目录旁边。
+add_custom_command(TARGET vdlisp POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vdlisp>/scripts"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_SOURCE_DIR}/scripts/lang_basics.lisp"
+          "$<TARGET_FILE_DIR:vdlisp>/scripts/lang_basics.lisp"
+)
+
 if(USE_LLVM)
   if(DEFINED LLVM_LIBS_LIST)
     target_link_libraries(vdlisp PRIVATE ${LLVM_LIBS_LIST})

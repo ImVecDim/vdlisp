@@ -20,11 +20,9 @@ class PairData;
 
 class JITIREmitter {
   public:
+    // 负责把受支持的 Lisp 子集直接翻译成 double 型 LLVM IR。
     JITIREmitter(vdlisp::FuncData *func, llvm::Function *F, llvm::LLVMContext &context);
     auto emitExpr(const vdlisp::Value &expr) -> llvm::Value *;
-    auto compileCond(const vdlisp::Value &clauses) -> llvm::Value *;
-    auto compileWhile(const vdlisp::Value &rest) -> llvm::Value *;
-    auto compileLet(const vdlisp::Value &rest) -> llvm::Value *;
     auto finalize() -> llvm::Function *;
 
   private:
@@ -35,6 +33,7 @@ class JITIREmitter {
     std::unordered_map<std::string, llvm::AllocaInst *> locals;
     std::unordered_map<std::string, int> param_index;
 
+    // 局部变量第一次写入时在入口块里补 alloca，保证 SSA 之外仍可进行简单赋值。
     auto ensure_local(const std::string &name) -> llvm::AllocaInst *;
 };
 

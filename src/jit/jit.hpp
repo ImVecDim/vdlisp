@@ -22,13 +22,14 @@ class FuncData;
 
 class JITCompiler {
   public:
+        // 一个进程内共享一个 LLVM 执行引擎，按函数粒度动态生成机器码。
     JITCompiler();
     ~JITCompiler() noexcept;
 
     [[nodiscard]] auto compileFunctionFromBuilder(const std::function<llvm::Function *(llvm::Module &)> &builder) -> void *;
     [[nodiscard]] auto getContext() noexcept -> llvm::LLVMContext &;
     [[nodiscard]] auto compileFuncData(vdlisp::FuncData *func) -> void *;
-    void releaseFunctionCode(void *fnPtr) noexcept;
+    auto releaseFunctionCode(void *fnPtr) noexcept -> void;
 
   private:
     llvm::LLVMContext context;
@@ -36,8 +37,7 @@ class JITCompiler {
     std::unordered_map<void *, llvm::Module *> module_for_fn;
 };
 
-// Global shared JIT instance used by the runtime; tests may rely on this being
-// available to trigger compilation consistently.
+// 下面几个 bridge 函数是 JIT 机器码和解释器运行时之间的窄接口。
 
 extern "C" [[nodiscard]] inline auto VDLISP__call_from_jit(void *funcdata_ptr, double *args, int argc) noexcept -> double {
     try {
@@ -51,6 +51,7 @@ extern "C" [[nodiscard]] inline auto VDLISP__call_from_jit(void *funcdata_ptr, d
         fptr.set_func(fd);
         vdlisp::Value head;
         vdlisp::Value *last = &head;
+        // 机器码只处理 double 数组，这里再封装回 Lisp 层的参数链表。
         for (int i = 0; i < argc; ++i) {
             vdlisp::Value num = S->make_number(args[i]);
             *last = S->make_pair(std::move(num), vdlisp::Value());
@@ -66,11 +67,30 @@ extern "C" [[nodiscard]] inline auto VDLISP__call_from_jit(void *funcdata_ptr, d
     }
 }
 
-// Lookup a free variable by name in a closure environment chain and return its
-// numeric value. Returns NaN if unbound or non-numeric.
-//
-// This is intentionally narrow: JIT currently operates on the numeric fast-path
-// (double in/out). Supporting arbitrary types would require a Value/NaN-box ABI.
+extern "C" [[nodiscard]] inline auto VDLISP__call_interpreted_from_jit(void *funcdata_ptr, double *args, int argc) noexcept -> double {
+    try {
+        vdlisp::State *S = vdlisp::jit_active_state;
+        if (!S)
+            return std::numeric_limits<double>::quiet_NaN();
+        auto *fd = reinterpret_cast<vdlisp::FuncData *>(funcdata_ptr);
+        if (!fd)
+            return std::numeric_limits<double>::quiet_NaN();
+
+        // 强制临时关掉这次调用的 compiled_code，确保回退路径不会再次跳回 JIT。
+        void *saved_code = fd->compiled_code;
+        bool saved_jit_failed = fd->jit_failed;
+        fd->compiled_code = nullptr;
+        fd->jit_failed = true;
+        double result = VDLISP__call_from_jit(funcdata_ptr, args, argc);
+        fd->compiled_code = saved_code;
+        fd->jit_failed = saved_jit_failed;
+        return result;
+    } catch (...) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+}
+
+// 自由变量查询只支持 number；查不到或类型不符都返回 NaN，交给调用方决定是否回退。
 extern "C" [[nodiscard]] inline auto VDLISP__jit_lookup_number(void *env_ptr, const char *name) noexcept -> double {
     try {
         if (!name)

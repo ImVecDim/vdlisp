@@ -1,4 +1,4 @@
-; generate many unique symbol bindings to stress symbol_intern
+; 生成大量符号相关操作，用来观察 symbol intern 表的扩张行为。
 (set i 0)
 (while (< i 10000)
   (set s (quote placeholder))

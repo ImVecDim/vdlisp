@@ -1,3 +1,4 @@
+# Python 版本的轻量压力样例，用来快速模拟链表与闭包对象的重复创建。
 for i in range(100):
     for j in range(100):
         tmp = []

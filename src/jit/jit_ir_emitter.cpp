@@ -14,6 +14,7 @@ using namespace llvm;
 
 JITIREmitter::JITIREmitter(vdlisp::FuncData *func_, llvm::Function *F_, llvm::LLVMContext &context_)
     : func(func_), F(F_), context(context_), ir(&F_->getEntryBlock()) {
+    // 先扫描形参，把符号名映射到 argv 数组下标。
     vdlisp::Value p = func->params;
     int idx = 0;
     while (p) {
@@ -31,6 +32,7 @@ JITIREmitter::JITIREmitter(vdlisp::FuncData *func_, llvm::Function *F_, llvm::LL
 }
 
 auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst * {
+    // 所有可变局部都统一放在入口块 alloca，避免在控制流中重复分配。
     auto it = locals.find(name);
     if (it != locals.end())
         return it->second;
@@ -40,169 +42,15 @@ auto JITIREmitter::ensure_local(const std::string &name) -> AllocaInst * {
     return a;
 }
 
-auto JITIREmitter::compileCond(const vdlisp::Value &clauses) -> llvm::Value * {
-    if (!clauses)
-        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "cond_cont", F);
-    std::vector<std::pair<llvm::Value *, llvm::BasicBlock *>> incoming;
-
-    vdlisp::Value walk = clauses;
-    int idx = 0;
-
-    // Handle empty condition case if needed, though usually walk is not null if called correctly
-    if (!walk) {
-        contBB->eraseFromParent();
-        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    }
-
-    while (walk) {
-        vdlisp::Value clause = pair_car(walk);
-        vdlisp::Value test = (is_pair(clause)) ? pair_car(clause) : vdlisp::Value();
-        vdlisp::Value body = (is_pair(clause)) ? pair_cdr(clause) : vdlisp::Value();
-
-        // Emit test
-        llvm::Value *condv = emitExpr(test);
-        if (!condv)
-            return nullptr;
-
-        llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-        llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
-
-        llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "cond_body" + std::to_string(idx), F);
-        llvm::BasicBlock *nextBB = llvm::BasicBlock::Create(context, "cond_next" + std::to_string(idx), F);
-
-        ir.CreateCondBr(is_true, bodyBB, nextBB);
-
-        // Emit body
-        ir.SetInsertPoint(bodyBB);
-        llvm::Value *last = nullptr;
-        while (body) {
-            vdlisp::Value ex = pair_car(body);
-            llvm::Value *v = emitExpr(ex);
-            if (!v)
-                return nullptr;
-            last = v;
-            body = body.get_pair()->cdr;
-        }
-        if (!last)
-            last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-
-        ir.CreateBr(contBB);
-        incoming.push_back({last, ir.GetInsertBlock()});
-
-        // Move to next
-        ir.SetInsertPoint(nextBB);
-        walk = walk.get_pair()->cdr;
-        ++idx;
-    }
-
-    // Fallthrough case
-    llvm::Value *defVal = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    ir.CreateBr(contBB);
-    incoming.push_back({defVal, ir.GetInsertBlock()});
-
-    ir.SetInsertPoint(contBB);
-    llvm::PHINode *phi = ir.CreatePHI(llvm::Type::getDoubleTy(context), (unsigned)incoming.size());
-    for (auto &p : incoming)
-        phi->addIncoming(p.first, p.second);
-
-    return phi;
-}
-auto JITIREmitter::compileWhile(const vdlisp::Value &rest) -> llvm::Value * {
-    vdlisp::Value cond = pair_car(rest);
-    vdlisp::Value body = rest.get_pair()->cdr;
-    llvm::Value *zero = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-
-    llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(context, "loop", F);
-    llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "loopbody", F);
-    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "loopcont", F);
-
-    ir.CreateBr(loopBB);
-    ir.SetInsertPoint(loopBB);
-    llvm::Value *condv = emitExpr(cond);
-    if (!condv)
-        return nullptr;
-    llvm::Value *is_true = ir.CreateFCmpONE(condv, zero);
-    ir.CreateCondBr(is_true, bodyBB, contBB);
-
-    ir.SetInsertPoint(bodyBB);
-    llvm::Value *last = nullptr;
-    vdlisp::Value bb = body;
-    while (bb) {
-        vdlisp::Value ex = pair_car(bb);
-        llvm::Value *v = emitExpr(ex);
-        if (!v)
-            return nullptr;
-        last = v;
-        bb = bb.get_pair()->cdr;
-    }
-    if (!last)
-        last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    ir.CreateBr(loopBB);
-
-    ir.SetInsertPoint(contBB);
-    return last;
-}
-
-auto JITIREmitter::compileLet(const vdlisp::Value &rest) -> llvm::Value * {
-    vdlisp::Value bindings = pair_car(rest);
-    vdlisp::Value letbody = rest.get_pair()->cdr;
-    vdlisp::Value b = bindings;
-    if (is_pair(b) && is_pair(pair_car(b))) {
-        while (b) {
-            vdlisp::Value pair = pair_car(b);
-            vdlisp::Value name = pair_car(pair);
-            vdlisp::Value val = pair_car(pair_cdr(pair));
-            if (!name || name.get_type() != vdlisp::TSYMBOL)
-                return nullptr;
-            llvm::Value *v = emitExpr(val);
-            if (!v)
-                return nullptr;
-            llvm::AllocaInst *a = ensure_local(*name.get_symbol());
-            ir.CreateStore(v, a);
-            b = pair_cdr(b);
-        }
-    } else {
-        while (b) {
-            vdlisp::Value name = pair_car(b);
-            if (!name || name.get_type() != vdlisp::TSYMBOL)
-                return nullptr;
-            vdlisp::Value next = pair_cdr(b);
-            if (!next)
-                return nullptr;
-            vdlisp::Value val = pair_car(next);
-            llvm::Value *v = emitExpr(val);
-            if (!v)
-                return nullptr;
-            llvm::AllocaInst *a = ensure_local(*name.get_symbol());
-            ir.CreateStore(v, a);
-            b = pair_cdr(next);
-        }
-    }
-    llvm::Value *last = nullptr;
-    vdlisp::Value bb = letbody;
-    while (bb) {
-        vdlisp::Value ex = pair_car(bb);
-        llvm::Value *v = emitExpr(ex);
-        if (!v)
-            return nullptr;
-        last = v;
-        bb = pair_cdr(bb);
-    }
-    if (!last)
-        last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
-    return last;
-}
 auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value * {
+    // JIT 只处理“数值子语言”，所有表达式最终都必须落成 double。
     if (!expr)
         return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
     if (expr.get_type() == vdlisp::TNUMBER) {
         return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), expr.get_number());
     }
     if (expr.get_type() == vdlisp::TSYMBOL) {
-        // Builtin truthy literal: in the interpreter '#t' is a globally-bound symbol
-        // (non-nil), but for the JIT's numeric representation we treat it as 1.0.
-        // This avoids an environment lookup and allows cond/while default branches.
+        // 在数值 JIT 里，truthy 统一编码成 1.0，nil/false 编码成 0.0。
         if (*expr.get_symbol() == "#t") {
             return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 1.0);
         }
@@ -219,8 +67,7 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value * {
             return ir.CreateLoad(llvm::Type::getDoubleTy(context), lit->second);
         }
 
-        // Free variable: try runtime lookup from closure env chain.
-        // Returns NaN if unbound or non-numeric; the caller will then fall back.
+        // 自由变量无法静态解析时，生成一次运行时查找。
         llvm::Module *M = F->getParent();
         llvm::Type *dblTy = llvm::Type::getDoubleTy(context);
         llvm::Type *i8ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context));
@@ -244,12 +91,186 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value * {
             return nullptr;
         std::string opname = *op.get_symbol();
 
-        if (opname == "cond")
-            return compileCond(rest);
-        if (opname == "while")
-            return compileWhile(rest);
-        if (opname == "let")
-            return compileLet(rest);
+        if (opname == "let") {
+            // 支持两种 let 绑定写法：扁平表和列表列表。
+            if (!rest || rest.get_type() != TPAIR)
+                return nullptr;
+            vdlisp::Value bindings = pair_car(rest);
+            vdlisp::Value body = pair_cdr(rest);
+
+            // 先计算右值，再统一写入，避免后续绑定意外影响前面的求值。
+            std::vector<std::pair<std::string, llvm::Value *>> evaluated;
+            
+            if (bindings.get_type() == TSYMBOL) {
+                vdlisp::Value walk = bindings;
+            }
+            
+            // 若第一项就是 symbol，则按 (let (a 1 b 2) ...) 的扁平格式解释。
+            if (bindings.get_type() == TPAIR && pair_car(bindings).get_type() == TSYMBOL) {
+                vdlisp::Value walk = bindings;
+                while (walk) {
+                    vdlisp::Value var = pair_car(walk);
+                    if (var.get_type() != TSYMBOL) break;
+                    walk = pair_cdr(walk);
+                    if (!walk) break;
+                    vdlisp::Value val_expr = pair_car(walk);
+                    llvm::Value *v = emitExpr(val_expr);
+                    if (!v) return nullptr;
+                    evaluated.push_back({*var.get_symbol(), v});
+                    walk = pair_cdr(walk);
+                }
+            } else {
+                // List of lists format: (let ((a 1) (b 2)) body)
+                for (vdlisp::Value b = bindings; b; b = pair_cdr(b)) {
+                    vdlisp::Value entry = pair_car(b);
+                    if (!entry || entry.get_type() != TPAIR)
+                        return nullptr;
+                    vdlisp::Value var = pair_car(entry);
+                    if (var.get_type() != TSYMBOL)
+                        return nullptr;
+                    vdlisp::Value val_expr = pair_car(pair_cdr(entry));
+                    llvm::Value *v = emitExpr(val_expr);
+                    if (!v)
+                        return nullptr;
+                    evaluated.push_back({*var.get_symbol(), v});
+                }
+            }
+
+            // 第二遍再写局部槽位，模拟解释器里 let 的批量绑定行为。
+            for (auto &pair : evaluated) {
+                ir.CreateStore(pair.second, ensure_local(pair.first));
+            }
+
+            llvm::Value *last = nullptr;
+            for (vdlisp::Value b = body; b; b = pair_cdr(b)) {
+                last = emitExpr(pair_car(b));
+                if (!last)
+                    return nullptr;
+            }
+            return last ? last : llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+        }
+
+        if (opname == "cond") {
+            // `cond` 会展开成多个分支块，最终在 continuation 上汇合成一个 PHI。
+            llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "cond_cont", F);
+            llvm::PHINode *phi = nullptr;
+
+            for (vdlisp::Value c = rest; c; c = pair_cdr(c)) {
+                vdlisp::Value clause = pair_car(c);
+                if (!clause || clause.get_type() != TPAIR)
+                    return nullptr;
+                vdlisp::Value test = pair_car(clause);
+                vdlisp::Value body = pair_cdr(clause);
+
+                llvm::Value *testV = emitExpr(test);
+                if (!testV)
+                    return nullptr;
+
+                llvm::Value *isTrue = ir.CreateFCmpUNE(testV, llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0));
+                
+                llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(context, "cond_then", F);
+                llvm::BasicBlock *nextBB = llvm::BasicBlock::Create(context, "cond_next", F);
+
+                ir.CreateCondBr(isTrue, thenBB, nextBB);
+
+                ir.SetInsertPoint(thenBB);
+                llvm::Value *last = nullptr;
+                if (!body) {
+                    last = testV;
+                } else {
+                    for (vdlisp::Value b = body; b; b = pair_cdr(b)) {
+                        last = emitExpr(pair_car(b));
+                        if (!last)
+                            return nullptr;
+                    }
+                }
+                if (!last)
+                    last = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+                
+                if (!ir.GetInsertBlock()->getTerminator()) {
+                    ir.CreateBr(contBB);
+                    if (!phi) {
+                        llvm::IRBuilder<> tmp(contBB);
+                        phi = tmp.CreatePHI(llvm::Type::getDoubleTy(context), 0);
+                    }
+                    phi->addIncoming(last, ir.GetInsertBlock());
+                }
+                
+                ir.SetInsertPoint(nextBB);
+            }
+
+            // 所有分支都不命中时，结果按 nil 的数值编码 0.0 处理。
+            if (!ir.GetInsertBlock()->getTerminator()) {
+                ir.CreateBr(contBB);
+                if (!phi) {
+                    llvm::IRBuilder<> tmp(contBB);
+                    phi = tmp.CreatePHI(llvm::Type::getDoubleTy(context), 0);
+                }
+                phi->addIncoming(llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0), ir.GetInsertBlock());
+            }
+
+            ir.SetInsertPoint(contBB);
+            return phi;
+        }
+
+        if (opname == "while") {
+            // `while` 直接翻成 test -> loop -> after 三段 basic block。
+            if (!rest || rest.get_type() != TPAIR)
+                return nullptr;
+            vdlisp::Value test = pair_car(rest);
+            vdlisp::Value body = pair_cdr(rest);
+
+            llvm::BasicBlock *testBB = llvm::BasicBlock::Create(context, "while_test", F);
+            llvm::BasicBlock *loopBB = llvm::BasicBlock::Create(context, "while_loop", F);
+            llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(context, "while_after", F);
+
+            ir.CreateBr(testBB);
+
+            ir.SetInsertPoint(testBB);
+            llvm::Value *testV = emitExpr(test);
+            if (!testV)
+                return nullptr;
+            llvm::Value *isTrue = ir.CreateFCmpUNE(testV, llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0));
+            ir.CreateCondBr(isTrue, loopBB, afterBB);
+
+            ir.SetInsertPoint(loopBB);
+            for (vdlisp::Value b = body; b; b = pair_cdr(b)) {
+                if (!emitExpr(pair_car(b)))
+                    return nullptr;
+            }
+            ir.CreateBr(testBB);
+
+            ir.SetInsertPoint(afterBB);
+            return llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0);
+        }
+
+        if (opname == "set"/* || opname == "set!" */) {
+            // JIT 中的 set 只支持写局部变量或形参的局部镜像。
+            if (!rest || rest.get_type() != TPAIR)
+                return nullptr;
+            vdlisp::Value var = pair_car(rest);
+            if (var.get_type() != TSYMBOL)
+                return nullptr;
+            vdlisp::Value val_expr = pair_car(pair_cdr(rest));
+            llvm::Value *valV = emitExpr(val_expr);
+            if (!valV)
+                return nullptr;
+
+            std::string name = *var.get_symbol();
+            auto it = locals.find(name);
+            if (it != locals.end()) {
+                ir.CreateStore(valV, it->second);
+                return valV;
+            }
+
+            auto pit = param_index.find(name);
+            if (pit != param_index.end()) {
+                ir.CreateStore(valV, ensure_local(name));
+                return valV;
+            }
+
+            return nullptr;
+        }
 
         std::vector<llvm::Value *> vals;
         vdlisp::Value a = rest;
@@ -296,7 +317,7 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value * {
             if (opname == "=")
                 cmp = ir.CreateFCmpOEQ(L, R);
             return ir.CreateSelect(cmp, llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 1.0), llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), 0.0));
-        } // TODO >2 vals???
+        } // 当前 JIT 只支持二元算术/比较。
         const std::string *nm_ptr = op.get_symbol();
         Env *e = func->closure_env;
         if (e)
@@ -317,6 +338,7 @@ auto JITIREmitter::emitExpr(const vdlisp::Value &expr) -> llvm::Value * {
         if (e)
             release_env(e);
         if (found && found.get_type() == vdlisp::TFUNC) {
+            // 已知 callee 是闭包函数时，优先直接调用其机器码，否则退回 bridge。
             vdlisp::FuncData *callee_fd = found.get_func();
             if (!callee_fd)
                 return nullptr;

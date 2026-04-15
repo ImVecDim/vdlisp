@@ -1,4 +1,4 @@
-;; JIT control forms test: exercises cond, let, while inside functions and triggers JIT
+;; JIT 控制流测试：分别验证 cond、let、while 在热点后能进入编译路径。
 
 ;; cond
 (set f_cond (fn (x) (cond ((> x 0) x) (#t (- x)))))

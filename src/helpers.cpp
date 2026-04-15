@@ -8,11 +8,12 @@
 
 namespace vdlisp {
 
+// Lisp 读取器里的分隔符集合：一旦遇到这些字符，当前 token 就结束。
 static auto is_delim(char c) noexcept -> bool {
     return std::isspace((unsigned char)c) || c == '(' || c == ')' || c == '\'' || c == '"' || c == ';' || c == '`' || c == ',';
 }
 
-static void advance_pos(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept {
+static auto advance_pos(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept -> void {
     if (pos >= src.size())
         return;
     char c = src[pos++];
@@ -24,7 +25,7 @@ static void advance_pos(const std::string &src, size_t &pos, size_t &line, size_
     }
 }
 
-static void skip_ws_and_comments(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept {
+static auto skip_ws_and_comments(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept -> void {
     while (pos < src.size()) {
         char c = src[pos];
         if (std::isspace((unsigned char)c)) {
@@ -40,7 +41,7 @@ static void skip_ws_and_comments(const std::string &src, size_t &pos, size_t &li
     }
 }
 
-// parser implementation; kept in src/helpers.cpp via non-member parse_at
+// 真正的递归下降解析器实现，返回一个 AST Value，并同步维护源码位置信息。
 
 static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Value {
     skip_ws_and_comments(src, pos, line, col);
@@ -48,7 +49,7 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
         return {};
     char c = src[pos];
     if (c == ')') {
-        throw ParseError(State::SourceLoc{name, line, col}, "unexpected )");
+        throw LispError(State::SourceLoc{name, line, col}, "unexpected )");
     }
     if (c == '(') {
         size_t open_line = line;
@@ -67,33 +68,30 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
                 closed = true;
                 break;
             }
-            // Parse next element. If it's the dot symbol "." then treat the
-            // following expression as the dotted-tail (cdr) of the list.
+            // 解析列表元素；若遇到点号，则切换到 dotted pair 语义。
             Value e = parse_at(S, src, pos, line, col, name);
             if (e && e.get_type() == TSYMBOL && *e.get_symbol() == ".") {
-                // dotted-tail: parse the tail expression and splice it as the cdr
+                // dotted tail 直接接到最后一个 pair 的 cdr 上。
                 skip_ws_and_comments(src, pos, line, col);
                 if (pos >= src.size())
-                    throw ParseError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF after . in list");
+                    throw LispError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF after . in list");
                 Value tail = parse_at(S, src, pos, line, col, name);
-                // set the cdr pointer of the last pair (pointed to by `last`) to tail
                 *last = tail;
-                // after a dotted-tail the list must be closed immediately
                 skip_ws_and_comments(src, pos, line, col);
                 if (pos >= src.size() || src[pos] != ')')
-                    throw ParseError(State::SourceLoc{name, open_line, open_col}, "expected ) after dotted-tail");
+                    throw LispError(State::SourceLoc{name, open_line, open_col}, "expected ) after dotted-tail");
                 advance_pos(src, pos, line, col);
                 closed = true;
                 break;
             }
-            // Otherwise append the parsed element to the list as before.
+            // 普通列表节点则继续按链表尾插的方式构造。
             *last = S.make_pair(std::move(e), Value());
             PairData *pd = (*last).get_pair();
             S.set_source_loc(*last, name, open_line, open_col);
             last = &pd->cdr;
         }
         if (!closed) {
-            throw ParseError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF while reading list");
+            throw LispError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF while reading list");
         }
         return head;
     } else if (c == '\'') {
@@ -160,22 +158,22 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
             }
         }
         if (pos >= src.size()) {
-            throw ParseError(State::SourceLoc{name, sline, scol}, "unexpected EOF while reading string");
+            throw LispError(State::SourceLoc{name, sline, scol}, "unexpected EOF while reading string");
         }
-        // consume closing quote
+        // 消费结尾引号后再生成字符串对象。
         advance_pos(src, pos, line, col);
         Value v = S.make_string(s);
         S.set_source_loc(v, name, sline, scol);
         return v;
     } else {
-        // symbol or number
+        // 非字符串与列表的 token 要么是 number，要么就是 symbol。
         size_t start = pos;
         size_t tline = line;
         size_t tcol = col;
         while (pos < src.size() && !is_delim(src[pos]))
             advance_pos(src, pos, line, col);
         std::string tok = src.substr(start, pos - start);
-        // try number
+        // 先尝试按数字读取；失败再按符号处理。
         char *endp = nullptr;
         double val = strtod(tok.c_str(), &endp);
         if (endp != tok.c_str() && *endp == '\0') {
@@ -207,6 +205,7 @@ auto State::parse_all(const std::string &src, const std::string &name) -> Value 
     Value head;
     Value *last = &head;
     while (pos < src.size()) {
+        // 顶层文件会被解析成“表达式组成的列表”，便于统一顺序执行。
         Value e = parse_at(*this, src, pos, line, col, name);
         *last = make_pair(std::move(e), Value());
         PairData *pd = (*last).get_pair();
@@ -219,8 +218,7 @@ auto list_of(State &S, std::initializer_list<Value> items) -> Value {
     Value head;
     Value *last = &head;
     for (auto &it : items) {
-        // `it` is from initializer_list; copy as before (moving here would
-        // not be safe for callers). Keep unchanged.
+        // initializer_list 元素是只读视图，这里保持复制语义更安全。
         *last = S.make_pair(it, Value());
         PairData *pd = (*last).get_pair();
         last = &pd->cdr;
@@ -274,6 +272,7 @@ auto State::get_source_line(const std::string &file, size_t line, std::string &o
 }
 
 void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std::string &msg) {
+    // 终端支持颜色时输出更友好的高亮；否则退回纯文本。
     bool color = isatty(fileno(stderr)) || getenv("VDLISP__COLOR");
     const char *c_red = "\x1b[1;31m";
     const char *c_bold = "\x1b[1m";
@@ -304,7 +303,7 @@ void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std
     }
 }
 
-// helper: clear closure_env held by TFUNC/TMACRO Values
+// 主动清理闭包环境引用，防止解释器退出时残留函数-环境环。
 void clear_closure_env(Value &v) noexcept {
     if (!v)
         return;
@@ -324,6 +323,7 @@ void clear_closure_env(Value &v) noexcept {
 }
 
 auto value_equal(const Value &a, const Value &b) -> bool {
+    // 结构相等用于 Lisp 层的 `=`，pair 采用递归比较。
     if (a == b)
         return true;
     if (!a || !b)

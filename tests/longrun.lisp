@@ -1,3 +1,4 @@
+; 长时间分配压力测试：持续覆盖 pair、list 和函数对象创建路径。
 (set i 0)
 (while (< i 20000)
   (set tmp (list))

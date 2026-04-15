@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 统一测试入口：先保证解释器已构建，再逐项执行功能与回归测试。
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-# Build to ensure binary is present (use CMake)
+# 先构建，避免用户直接运行测试脚本时没有可执行文件。
 if [ ! -d build ]; then
   cmake -S . -B build -D ENABLE_LTO=OFF
 fi
 cmake --build build -j$(nproc)
 
 
-# Interpreter binary (allow override)
+# 允许外部覆盖被测解释器路径，方便对比不同构建配置。
 VDLISP__BIN=${VDLISP__BIN:-build/vdlisp}
 
-# Pool lifecycle test: run the interpreter on a script that performs many allocations
+# 先跑一次内存池/对象生命周期压力测试，尽早发现明显的资源管理问题。
 {
   echo "Running pool lifecycle test (via interpreter)..."
   if "$VDLISP__BIN" tests/pool_test.lisp 2>&1 | grep -q "pool_test_ok"; then
@@ -25,11 +26,8 @@ VDLISP__BIN=${VDLISP__BIN:-build/vdlisp}
   fi
 }
 
-# Test cases: each item is "<expr>" "<expected>".
-# If expected starts with 'err:' we assert the interpreter prints an error
-# containing the substring after 'err:'. For error cases we also assert the
-# source filename and source line are shown along with a caret pointing to
-# the column.
+# 每个测试用例由“输入表达式 + 期望输出”组成。
+# 以 err: 开头的期望值表示这里应该报错，并且要验证文件名、源码行和光标提示都存在。
 TESTS=(
   # Arithmetic
   '(+ 1 2)' '3'
@@ -140,11 +138,11 @@ run_one() {
   local out
   out=$("$VDLISP__BIN" "$tmpf" 2>&1 || true)
 
-  # capture last non-empty line for normal checks
+  # 非错误场景下，以最后一行非空输出作为结果断言。
   local last
   last=$(echo "$out" | sed '/^$/d' | tail -n 1 || true)
   last=$(echo "$last" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-  # gather first line of source for caret check
+  # 错误场景还会校验源码回显与 caret 是否对齐。
   local srcline
   srcline=$(head -n 1 "$tmpf" || true)
   local base
@@ -159,21 +157,21 @@ run_one() {
       echo "  got               : '$out'"
       exit 1
     fi
-    # expect the filename to appear in the error output
+    # 错误信息里必须带上临时脚本文件名。
     if ! echo "$out" | grep -Fq "$base"; then
       echo "FAILED (expected filename in error): $expr"
       echo "  expected to contain filename: '$base'"
       echo "  got                       : '$out'"
       exit 1
     fi
-    # expect the source line to be echoed
+    # 还要把出错源码行打印出来。
     if ! echo "$out" | grep -Fq "$srcline"; then
       echo "FAILED (expected source line in error): $expr"
       echo "  expected source line: '$srcline'"
       echo "  got                : '$out'"
       exit 1
     fi
-    # caret presence (allow optional ANSI color sequences before '^')
+    # caret 允许前面带 ANSI 颜色控制序列。
     if ! echo "$out" | grep -Eq $'^[[:space:]]*(\033\[[0-9;]*m)?\\^'; then
       echo "FAILED (expected caret in error): $expr"
       echo "  expected a line containing '^' under the source line (optionally colored)"
@@ -194,12 +192,12 @@ run_one() {
   fi
 }
 
-# Run tests
+# 顺序运行表驱动测试，遇到第一处失败立即退出。
 for ((i=0;i<${#TESTS[@]};i+=2)); do
   run_one "${TESTS[i]}" "${TESTS[i+1]}"
 done
 
-# Run JIT control forms script to exercise cond/let/while compiled paths
+# 额外跑一个脚本，覆盖控制流结构在 JIT 下的编译与打印路径。
 {
   echo "Running JIT control forms script..."
   out=$("$VDLISP__BIN" tests/jit_control_forms.lisp 2>&1 || true)

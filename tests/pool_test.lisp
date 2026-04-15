@@ -1,4 +1,4 @@
-;; Pool lifecycle stress test: allocate many objects and exit
+;; 内存池生命周期压力测试：大量分配 cons、list 和闭包后直接退出。
 
 (set i 0)
 (while (< i 100)

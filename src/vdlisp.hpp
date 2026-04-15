@@ -12,15 +12,16 @@ namespace vdlisp {
 
 class State {
   public:
+    // 运行时的核心对象：持有全局环境、符号表、源码映射与模块缓存。
     Env *global = nullptr;
     std::unordered_map<std::string, Value> symbol_intern;
 
     State();
 
-    // Release runtime references (best-effort).
-    void shutdown_and_purge_pools();
+    // 尽力释放运行期引用，主要用于正常退出与泄漏检查。
+    auto shutdown_and_purge_pools() -> void;
 
-    // factory helpers
+    // 各类 Lisp 值的统一构造入口。
     [[nodiscard]] auto make_nil() noexcept -> Value;
     [[nodiscard]] auto make_number(double n) noexcept -> Value;
     [[nodiscard]] auto make_string(const std::string &s) -> Value;
@@ -36,11 +37,11 @@ class State {
     [[nodiscard]] auto make_macro(const Value &params, const Value &body, Env *env) -> Value;
     [[nodiscard]] auto make_macro(Value &&params, Value &&body, Env *env) -> Value;
 
-    // pooled helpers
+    // Env 与 Value 的底层分配封装，对上层隐藏具体内存表示。
     [[nodiscard]] auto make_pooled_value(Type t) noexcept -> Value;
     [[nodiscard]] auto make_env(Env *parent = nullptr) -> Env *;
 
-    // convenience helpers for constructing lists
+    // 便捷的字符串列表构造器，主要给 argv 等宿主输入使用。
     template <class It>
     [[nodiscard]] auto make_string_list(It b, It e) -> Value {
         Value head;
@@ -55,65 +56,63 @@ class State {
     }
     [[nodiscard]] auto make_string_list(int argc, char **argv, int start = 0) -> Value;
 
-    // parsing / eval
+    // 解析、求值与调用构成解释器主入口。
     [[nodiscard]] auto parse(const std::string &src, const std::string &name = "(string)") -> Value;
     [[nodiscard]] auto parse_all(const std::string &src, const std::string &name = "(string)") -> Value;
     [[nodiscard]] auto eval(const Value &expr, Env *env) -> Value;
     [[nodiscard]] auto call(const Value &fn, const Value &args, Env *env = nullptr) -> Value;
     [[nodiscard]] auto do_list(const Value &body, Env *env) -> Value;
 
-    // source location helpers
+    // 给 AST 节点绑定源码位置，便于报错与宏展开追踪。
     struct SourceLoc {
         std::string file;
         size_t line = 0;
         size_t col = 0;
         std::string label;
     };
-    void set_source_loc(const Value &v, const std::string &file, size_t line, size_t col);
+    auto set_source_loc(const Value &v, const std::string &file, size_t line, size_t col) -> void;
     auto get_source_loc(const Value &v, SourceLoc &out) const -> bool;
 
-    // current expression being evaluated (set while evaluating; left set on exception)
+    // 当前正在求值的表达式；异常时故意保留，供顶层错误报告读取。
     Value current_expr;
-    // source location map: maps Value* to SourceLoc
+    // Value 身份到源码位置的映射。
     std::unordered_map<uint64_t, SourceLoc> src_map;
-    // call-chain map for expanded nodes: maps a Value* to the chain of SourceLocs
-    // representing macro/function calls that led to this expansion.
+    // 宏展开或函数调用传播过来的调用链，帮助定位“错误从哪里展开而来”。
     std::unordered_map<uint64_t, std::vector<SourceLoc>> src_call_chain_map;
 
-    // source contents per filename
+    // 已载入源码文本，用于报错时回显源码行。
     std::unordered_map<std::string, std::string> sources;
-    // cache for required modules: maps canonical filename to result value
+    // `require` 模块缓存，键尽量使用规范化路径。
     std::unordered_map<std::string, Value> loaded_modules;
-    // return the indicated line (1-based) from a source file; returns false if not available
+    // 返回指定源码行；若源码不存在则返回 false。
     [[nodiscard]] auto get_source_line(const std::string &file, size_t line, std::string &out) const -> bool;
 
   private:
-    // Allocation helpers
+    // 具体对象的堆分配细节都收敛在这里。
     [[nodiscard]] auto alloc_string(const std::string &s) -> StringData *;
     // Allocation helpers take rvalue references to avoid an extra move
     [[nodiscard]] auto alloc_pair(Value &&car, Value &&cdr) -> PairData *;
     [[nodiscard]] auto alloc_func(Value &&params, Value &&body, Env *env) -> FuncData *;
     [[nodiscard]] auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData *;
 
-    // Pooled allocation helpers for Value and Env
+    // Env 的底层分配口，和上层 make_env 分离便于后续替换策略。
     [[nodiscard]] auto alloc_env() -> Env *;
 
   public:
-    // helpers
+    // 对外常用的运行时辅助函数。
     [[nodiscard]] auto to_string(const Value &v) -> std::string;
-    void register_builtin(const std::string &name, const CFunc &fn);
-    void register_prim(const std::string &name, const Prim &fn);
+    auto register_builtin(const std::string &name, const CFunc &fn) -> void;
+    auto register_prim(const std::string &name, const Prim &fn) -> void;
     [[nodiscard]] auto get_bound(const std::string &name, Env *env) -> Value;
-    void bind_global(const std::string &name, Value v);
+    auto bind_global(const std::string &name, Value v) -> void;
     [[nodiscard]] auto bind(const Value &sym, Value v, Env *env) -> Value;
     [[nodiscard]] auto set(const Value &sym, Value v, Env *env) -> Value;
 };
 
-// Pointer to the currently active State while executing JIT code.
-// Set by `State::call` before entering native JIT code and cleared after.
+// 执行 JIT 机器码时，桥接函数通过它回到当前解释器状态。
 extern State *jit_active_state;
 
-// utility
+// 便捷地把一组 Value 拼成 Lisp 列表。
 [[nodiscard]] auto list_of(State &S, std::initializer_list<Value> items) -> Value;
 
 } // namespace vdlisp

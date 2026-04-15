@@ -12,152 +12,145 @@ using namespace vdlisp;
 
 namespace vdlisp {
 
-template <typename Op>
-static auto arith_binary(
-    State &S,
-    const Value &args,
-    Op op,
-    const char *name) -> Value {
+// 统一检查一元内建参数，避免每个 builtin 自己重复拆表。
+static auto require_unary_args(const Value &args, const char *name) -> Value {
+    if (!args || pair_cdr(args))
+        throw LispError(std::string(name) + " requires exactly one argument");
+    return pair_car(args);
+}
+
+static auto require_binary_args(const Value &args, const char *name) -> std::pair<Value, Value> {
     if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
-        throw std::runtime_error(std::string(name) + " requires exactly two arguments");
-    double a = require_number(pair_car(args), name);
-    double b = require_number(pair_car(pair_cdr(args)), name);
-    return S.make_number(op(a, b));
+        throw LispError(std::string(name) + " requires exactly two arguments");
+    return {pair_car(args), pair_car(pair_cdr(args))};
+}
+
+static auto require_pair_arg(const Value &args, const char *name) -> Value {
+    Value v = require_unary_args(args, name);
+    if (v && v.get_type() != TPAIR)
+        throw LispError(std::string(name) + " expects a pair");
+    return v;
+}
+
+// 用模板复用数值内建的“取参-检查-运算-回包”流程。
+template <typename Op>
+static Value builtin_arith(State &S, const Value &args, const char *name, Op op) {
+    auto [a, b] = require_binary_args(args, name);
+    return S.make_number(op(require_number(a, name), require_number(b, name)));
 }
 
 template <typename Cmp>
-static auto compare_binary(
-    State &S,
-    const Value &args,
-    Cmp cmp,
-    const char *name) -> Value {
-    if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
-        throw std::runtime_error(std::string(name) + " requires exactly two arguments");
-    double a = require_number(pair_car(args), name);
-    double b = require_number(pair_car(pair_cdr(args)), name);
-    return cmp(a, b) ? S.get_bound("#t", S.global) : Value();
+static Value builtin_cmp(State &S, const Value &args, const char* name, Cmp cmp) {
+    auto [a, b] = require_binary_args(args, name);
+    return cmp(require_number(a, name), require_number(b, name)) ? S.get_bound("#t", S.global) : Value();
 }
 
-// arithmetic builtins (file-scope wrappers)
-static Value builtin_add(State &S, const Value &args) { return arith_binary(S, args, std::plus<double>{}, "+"); }
-static Value builtin_sub(State &S, const Value &args) { return arith_binary(S, args, std::minus<double>{}, "-"); }
-static Value builtin_mul(State &S, const Value &args) { return arith_binary(S, args, std::multiplies<double>{}, "*"); }
-static Value builtin_div(State &S, const Value &args) {
-    return arith_binary(S, args, [](double a, double b) -> double { if (b == 0.0) throw std::runtime_error("division by zero"); return a / b; }, "/");
+static Value builtin_add(State &S, const Value &args) { return builtin_arith(S, args, "+", std::plus<double>{}); }
+static Value builtin_sub(State &S, const Value &args) { return builtin_arith(S, args, "-", std::minus<double>{}); }
+static Value builtin_mul(State &S, const Value &args) { return builtin_arith(S, args, "*", std::multiplies<double>{}); }
+static Value builtin_div(State &S, const Value &args) { 
+    return builtin_arith(S, args, "/", [](double a, double b) {
+        if (b == 0.0) throw LispError("division by zero"); 
+        return a / b;
+    }); 
 }
 
-// comparison builtins (file-scope wrappers)
-static Value builtin_cmp_lt(State &S, const Value &args) { return compare_binary(S, args, std::less<double>{}, "<"); }
-static Value builtin_cmp_gt(State &S, const Value &args) { return compare_binary(S, args, std::greater<double>{}, ">"); }
-static Value builtin_cmp_le(State &S, const Value &args) { return compare_binary(S, args, std::less_equal<double>{}, "<="); }
-static Value builtin_cmp_ge(State &S, const Value &args) { return compare_binary(S, args, std::greater_equal<double>{}, ">="); }
+static Value builtin_cmp_lt(State &S, const Value &args) { return builtin_cmp(S, args, "<", std::less<double>{}); }
+static Value builtin_cmp_gt(State &S, const Value &args) { return builtin_cmp(S, args, ">", std::greater<double>{}); }
+static Value builtin_cmp_le(State &S, const Value &args) { return builtin_cmp(S, args, "<=", std::less_equal<double>{}); }
+static Value builtin_cmp_ge(State &S, const Value &args) { return builtin_cmp(S, args, ">=", std::greater_equal<double>{}); }
 
 void register_core(State &S) {
-    // --- builtins ---
+    // 基础数值运算与比较全部走统一的参数校验辅助函数。
+    S.register_builtin("+", builtin_add);
+    S.register_builtin("-", builtin_sub);
+    S.register_builtin("*", builtin_mul);
+    S.register_builtin("/", builtin_div);
+    S.register_builtin("<", builtin_cmp_lt);
+    S.register_builtin(">", builtin_cmp_gt);
+    S.register_builtin("<=", builtin_cmp_le);
+    S.register_builtin(">=", builtin_cmp_ge);
+
+    // 普通内建函数：参数会先求值，再把结果列表传给 C++ 实现。
     S.register_builtin("print", [](State &S, const Value &args) -> Value {
-        Value last = Value();
+        Value last;
         bool first = true;
-        Value cur = args;
-        while (cur) {
-            if (!first)
-                std::cout << ' ';
-            Value el = pair_car(cur);
-            std::cout << S.to_string(el);
-            first = false;
+        foreach_lisp(args, [&](Value el) {
+            std::cout << (std::exchange(first, false) ? "" : " ") << S.to_string(el);
             last = el;
-            cur = pair_cdr(cur);
-        }
-        std::cout << '\n';
+        });
+        std::cout << std::endl;
         return last;
     });
 
-    struct {
-        const char *n;
-        Value (*f)(State &, const Value &);
-    } ops[] = {
-        {"+", builtin_add}, {"-", builtin_sub}, //
-        {"*", builtin_mul}, {"/", builtin_div}, //
-        {"<", builtin_cmp_lt}, {">", builtin_cmp_gt}, //
-        {"<=", builtin_cmp_le}, {">=", builtin_cmp_ge}};
-    for (auto &op : ops)
-        S.register_builtin(op.n, op.f);
     S.register_builtin("list", [](State &, const Value &args) -> Value {
         return args;
     });
     S.register_builtin("type", [](State &S, const Value &args) -> Value {
-        Value v = pair_car(args);
+        Value v = require_unary_args(args, "type");
         return S.make_symbol(type_name(v));
     });
     S.register_builtin("parse", [](State &S, const Value &args) -> Value {
-        if (!args || !pair_car(args) || pair_car(args).get_type() != TSTRING)
-            throw std::runtime_error("parse requires a string");
-        return S.parse(*pair_car(args).get_string());
+        Value v = require_unary_args(args, "parse");
+        if (!v || v.get_type() != TSTRING)
+            throw LispError("parse requires a string");
+        return S.parse(*v.get_string());
     });
     S.register_builtin("error", [](State &S, const Value &args) -> Value {
         std::string msg = pair_car(args) ? S.to_string(pair_car(args)) : std::string("error");
-        throw std::runtime_error(msg);
+        throw LispError(msg);
     });
 
     S.register_builtin("cons", [](State &S, const Value &args) -> Value {
-        Value a = pair_car(args);
-        Value b = pair_car(pair_cdr(args));
+        auto [a, b] = require_binary_args(args, "cons");
         return S.make_pair(std::move(a), std::move(b));
     });
     S.register_builtin("car", [](State &, const Value &args) -> Value {
-        Value v = pair_car(args);
+        Value v = require_pair_arg(args, "car");
         if (!v)
             return {};
-        if (v.get_type() != TPAIR)
-            throw std::runtime_error("car expects a pair");
         return pair_car(v);
     });
     S.register_builtin("cdr", [](State &, const Value &args) -> Value {
-        Value v = pair_car(args);
+        Value v = require_pair_arg(args, "cdr");
         if (!v)
             return {};
-        if (v.get_type() != TPAIR)
-            throw std::runtime_error("cdr expects a pair");
         return pair_cdr(v);
     });
     S.register_builtin("setcar", [](State &, const Value &args) -> Value {
-        Value p = pair_car(args);
-        Value v = pair_car(pair_cdr(args));
+        auto [p, v] = require_binary_args(args, "setcar");
         if (!p || p.get_type() != TPAIR)
-            throw std::runtime_error("setcar expects a pair");
+            throw LispError("setcar expects a pair");
         pair_set_car(p, v);
         return v;
     });
     S.register_builtin("setcdr", [](State &, const Value &args) -> Value {
-        Value p = pair_car(args);
-        Value v = pair_car(pair_cdr(args));
+        auto [p, v] = require_binary_args(args, "setcdr");
         if (!p || p.get_type() != TPAIR)
-            throw std::runtime_error("setcdr expects a pair");
+            throw LispError("setcdr expects a pair");
         pair_set_cdr(p, v);
         return v;
     });
 
     S.register_builtin("=", [](State &S, const Value &args) -> Value {
-        if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
-            throw std::runtime_error("= requires exactly two arguments");
-        Value a = pair_car(args);
-        Value b = pair_car(pair_cdr(args));
+        auto [a, b] = require_binary_args(args, "=");
         return value_equal(a, b) ? S.get_bound("#t", S.global) : Value();
     });
 
     S.register_builtin("exit", [](State &S, const Value &args) -> Value {
         int code = 0;
-        if (pair_car(args))
-            code = (int)require_number(pair_car(args), "exit");
+        if (args)
+            code = (int)require_number(require_unary_args(args, "exit"), "exit");
         // Ensure pooled memory is released before terminating the process.
         S.shutdown_and_purge_pools();
         std::exit(code);
         return {};
     });
 
-    // use centralized require implementation
+    // `require` 单独放在独立编译单元里，便于处理路径与模块缓存。
     register_require(S);
 
-    // --- prims ---
+    // 特殊形式：接收未经求值的参数列表，并自行决定求值策略。
     S.register_prim("quote", [](State &, const Value &args, Env *) -> Value {
         return pair_car(args);
     });
@@ -165,6 +158,7 @@ void register_core(State &S) {
         return pair_car(args) ? S.eval(pair_car(args), env) : Value();
     });
     S.register_prim("quasiquote", [](State &S, const Value &args, Env *env) -> Value {
+        // 递归展开 quasiquote；只有最内层的 unquote 会真正触发求值。
         std::function<Value(const Value &, int)> qq_expand = [&](const Value &expr, int depth) -> Value {
             if (!expr)
                 return {};
@@ -188,7 +182,7 @@ void register_core(State &S) {
         };
         return qq_expand(pair_car(args), 1);
     });
-    // `if` removed as a primitive; provide it via a macro implemented using `cond`.
+    // `if` 不作为 primitive 存在，而是由语言层宏基于 `cond` 提供。
     S.register_prim("set", [](State &S, const Value &args, Env *env) -> Value {
         Value sym = pair_car(args);
         Value valexpr = pair_car(pair_cdr(args));
@@ -209,6 +203,7 @@ void register_core(State &S) {
         Value vars = pair_car(args);
         Env *e = S.make_env(env);
         EnvGuard eg(e);
+        // `let` 绑定按顺序建立，后续绑定可以看到前面的结果。
         while (vars) {
             Value sym = pair_car(vars);
             vars = pair_cdr(vars);
@@ -228,9 +223,7 @@ void register_core(State &S) {
         }
         return res;
     });
-    // cond special form: evaluate clauses sequentially; for the first true
-    // test evaluate and return the body. Implemented directly to avoid
-    // depending on `if` (which may be provided at the language level as a macro).
+    // `cond` 直接在解释器里实现，避免再依赖语言层宏，便于作为其它控制结构的基础。
     S.register_prim("cond", [](State &S, const Value &args, Env *env) -> Value {
         Value clauses = args;
         while (clauses) {
@@ -249,13 +242,11 @@ void register_core(State &S) {
         return S.make_nil();
     });
 
-    // Provide `if` as a language-level macro implemented via `cond`.
-    // This creates a proper TMACRO binding in the global environment so user
-    // scripts can rely on `if` even though it's not a primitive.
+    // `apply` 负责把“函数 + 实参列表”重新交给统一调用入口。
     S.register_prim("apply", [](State &S, const Value &args, Env *env) -> Value {
         Value fnexpr = pair_car(args);
         if (!fnexpr)
-            throw std::runtime_error("apply requires a function");
+            throw LispError("apply requires a function");
         Value listexpr = pair_car(pair_cdr(args));
         Value fn = S.eval(fnexpr, env);
         Value list = S.eval(listexpr, env);

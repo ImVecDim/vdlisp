@@ -15,8 +15,10 @@
 
 // Bridge declared in jit_bridge.cpp
 extern "C" auto VDLISP__call_from_jit(void *, double *, int) noexcept -> double;
+extern "C" auto VDLISP__call_interpreted_from_jit(void *, double *, int) noexcept -> double;
 
 JITCompiler::JITCompiler() {
+    // 初始化 LLVM 的本机目标，让 ExecutionEngine 能直接产出当前平台机器码。
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
@@ -31,7 +33,7 @@ JITCompiler::JITCompiler() {
             .create());
 
     if (!executionEngine) {
-        throw std::runtime_error("ExecutionEngine creation failed: " + error);
+        throw vdlisp::LispError("ExecutionEngine creation failed: " + error);
     }
 }
 
@@ -50,12 +52,15 @@ auto JITCompiler::compileFunctionFromBuilder(const std::function<llvm::Function 
 
     llvm::Module *mptr = m.get();
 
-    // If the module references our runtime bridge, make sure it's mapped
+    // 如果 IR 用到了运行时桥接函数，需要先把符号映射给 ExecutionEngine。
     if (llvm::Function *bridge = mptr->getFunction("VDLISP__call_from_jit")) {
         executionEngine->addGlobalMapping(bridge, reinterpret_cast<void *>(VDLISP__call_from_jit));
     }
+    if (llvm::Function *interp_bridge = mptr->getFunction("VDLISP__call_interpreted_from_jit")) {
+        executionEngine->addGlobalMapping(interp_bridge, reinterpret_cast<void *>(VDLISP__call_interpreted_from_jit));
+    }
 
-    // Map helper(s) used by JITed code.
+    // 自由变量读取辅助函数同样需要显式映射。
     if (llvm::Function *lookup = mptr->getFunction("VDLISP__jit_lookup_number")) {
         executionEngine->addGlobalMapping(lookup, reinterpret_cast<void *>(VDLISP__jit_lookup_number));
     }
@@ -68,7 +73,7 @@ auto JITCompiler::compileFunctionFromBuilder(const std::function<llvm::Function 
     return ptr;
 }
 
-void JITCompiler::releaseFunctionCode(void *fnPtr) noexcept {
+auto JITCompiler::releaseFunctionCode(void *fnPtr) noexcept -> void {
     if (!fnPtr)
         return;
     auto it = module_for_fn.find(fnPtr);
@@ -92,8 +97,8 @@ auto JITCompiler::getContext() noexcept -> llvm::LLVMContext & {
     return context;
 }
 
-// helper: scan an AST and collect TFUNC pointers referenced by symbol calls
-static void collect_called_funcs(const vdlisp::Value &expr, std::vector<vdlisp::FuncData *> &out, vdlisp::Env *closure) {
+// 预扫描函数体里可能直接调用到的闭包函数，尽量先把它们一起编译出来。
+static auto collect_called_funcs(const vdlisp::Value &expr, std::vector<vdlisp::FuncData *> &out, vdlisp::Env *closure) -> void {
     using namespace vdlisp;
     if (!expr)
         return;
@@ -138,6 +143,7 @@ auto JITCompiler::compileFuncData(vdlisp::FuncData *func) -> void * {
         return nullptr;
     using namespace vdlisp;
 
+    // 先递归编译可能的被调函数，可减少第一次进入 JIT 时的桥接开销。
     std::vector<FuncData *> to_compile;
     collect_called_funcs(func->body, to_compile, func->closure_env);
     for (FuncData *fd : to_compile) {

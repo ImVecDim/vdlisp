@@ -2,6 +2,7 @@
 import sys
 from pathlib import Path
 
+# 统计 src 下 C/C++ 源文件的“有效代码行数”，会尽量忽略注释与空行。
 def count_file(path: Path) -> int:
     in_block = False
     cnt = 0
@@ -13,6 +14,7 @@ def count_file(path: Path) -> int:
                 out_chars = []
                 while i < n:
                     if in_block:
+                        # 多行注释跨文件行持续生效，直到遇到 */ 为止。
                         idx = line.find('*/', i)
                         if idx == -1:
                             i = n
@@ -23,6 +25,7 @@ def count_file(path: Path) -> int:
                             continue
                     ch = line[i]
                     if ch == '"':
+                        # 字符串字面量内部的 // 或 /* 不应该被误判成注释。
                         out_chars.append(ch)
                         i += 1
                         while i < n:
@@ -36,6 +39,7 @@ def count_file(path: Path) -> int:
                                 i += 1
                         continue
                     if ch == "'":
+                        # 同样跳过字符字面量，避免转义字符扰乱扫描。
                         out_chars.append(ch)
                         i += 1
                         while i < n:
@@ -65,6 +69,7 @@ def count_file(path: Path) -> int:
 
 
 def main():
+    # 只统计源目录下的 C/C++ 实现，不把测试脚本和构建产物算进去。
     root =  Path('src')
     exts = {'.c', '.cpp', '.h', '.hpp'}
     total = 0

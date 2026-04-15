@@ -12,6 +12,7 @@ using namespace vdlisp;
 
 namespace {
 
+// 以“源码片段 + 光标”的形式打印调用链，主要服务宏展开与嵌套调用报错。
 static void print_call_chain(const State &S, const std::vector<State::SourceLoc> &chain) {
     if (chain.empty())
         return;
@@ -34,12 +35,16 @@ static void print_call_chain(const State &S, const std::vector<State::SourceLoc>
 }
 
 static void report_exception(State &S, const std::exception &ex) {
-    if (auto pe = dynamic_cast<const ParseError *>(&ex)) {
-        print_error_with_loc(S, pe->loc, pe->what());
-        if (!pe->call_chain.empty())
-            print_call_chain(S, pe->call_chain);
-        return;
+    // 优先使用 LispError 自带的位置；否则退回 current_expr 做近似定位。
+    if (auto le = dynamic_cast<const LispError *>(&ex)) {
+        if (le->has_loc) {
+            print_error_with_loc(S, le->loc, le->what());
+            if (!le->call_chain.empty())
+                print_call_chain(S, le->call_chain);
+            return;
+        }
     }
+
     State::SourceLoc loc;
     bool have_loc = S.get_source_loc(S.current_expr, loc);
     if (have_loc) {
@@ -54,6 +59,7 @@ static void report_exception(State &S, const std::exception &ex) {
 }
 
 static void repl(State &S) {
+    // REPL 历史写入用户目录，方便交互式试验语言特性。
     const char *home = getenv("HOME");
     std::string histfile;
     if (home)
@@ -86,7 +92,7 @@ static void repl(State &S) {
         write_history(histfile.c_str());
 }
 
-// Check at runtime that NaN-boxing assumptions hold on this platform.
+// NaN-boxing 依赖 48 位 canonical pointer，这里在启动时做一次硬检查。
 static auto check_nanboxing_environment() -> bool {
     void *p = ::operator new(1);
     auto addr = reinterpret_cast<uint64_t>(p);
@@ -106,16 +112,16 @@ auto main(int argc, char **argv) -> int {
     }
 
     State S;
-    // Ensure we return pooled memory on normal exit (helps leak checkers).
+    // 正常退出时主动清理运行时，便于配合 ASAN/Valgrind 观察真实泄漏。
     struct ShutdownGuard {
         State &S;
         ~ShutdownGuard() {
             S.shutdown_and_purge_pools();
         }
     } guard{S};
-    // bind argv as a list of strings into the global environment
+    // 把宿主命令行参数暴露给 Lisp 世界。
     S.bind_global("argv", S.make_string_list(argc, argv, 1));
-    // Auto-load core language helpers implemented in Lisp if supplied.
+    // 如果提供了语言层辅助库，启动时自动加载。
     try {
         std::filesystem::path langfile("scripts/lang_basics.lisp");
         if (std::filesystem::exists(langfile)) {
@@ -126,16 +132,22 @@ auto main(int argc, char **argv) -> int {
                 Value le = S.parse_all(lss.str(), langfile.string());
                 if (le)
                     (void)S.do_list(le, S.global);
+            } else {
+                std::cerr << "warning: failed to open startup helper script: " << langfile << "\n";
             }
         }
+    } catch (const std::exception &ex) {
+        // 启动辅助脚本不是硬依赖，失败时给出警告后继续运行解释器。
+        std::cerr << "warning: failed to load startup helper script scripts/lang_basics.lisp: " << ex.what() << "\n";
     } catch (...) {
-        // ignore failures to auto-load language file
+        // 保底兜住非标准异常，避免辅助脚本阻断解释器启动。
+        std::cerr << "warning: failed to load startup helper script scripts/lang_basics.lisp: unknown error\n";
     }
     if (argc < 2) {
         repl(S);
         return 0;
     }
-    // Load and execute file
+    // 批处理模式：加载文件、解析顶层表达式并按顺序执行。
     try {
         std::ifstream f(argv[1]);
         if (!f) {
