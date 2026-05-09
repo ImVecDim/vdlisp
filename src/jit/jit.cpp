@@ -1,6 +1,5 @@
 // jit.cpp (moved into src/jit)
 #include "jit/jit.hpp"
-#include <iostream>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/ExecutionEngine/MCJIT.h>
 #include <llvm/IR/IRBuilder.h>
@@ -13,28 +12,24 @@
 #include "nanbox.hpp"
 #include <unordered_map>
 
-// Bridge declared in jit_bridge.cpp
-extern "C" auto VDLISP__call_from_jit(void *, double *, int) noexcept -> double;
-extern "C" auto VDLISP__call_interpreted_from_jit(void *, double *, int) noexcept -> double;
-
 JITCompiler::JITCompiler() {
-    // 初始化 LLVM 的本机目标，让 ExecutionEngine 能直接产出当前平台机器码。
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::InitializeNativeTargetAsmParser();
+  // 初始化 LLVM 的本机目标，让 ExecutionEngine 能直接产出当前平台机器码。
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+  llvm::InitializeNativeTargetAsmParser();
 
-    auto m = std::make_unique<llvm::Module>("jit_module", context);
+  auto m = std::make_unique<llvm::Module>("jit_module", context);
 
-    std::string error;
-    executionEngine = std::unique_ptr<llvm::ExecutionEngine>(
-        llvm::EngineBuilder(std::move(m))
-            .setErrorStr(&error)
-            .setEngineKind(llvm::EngineKind::JIT)
-            .create());
+  std::string error;
+  executionEngine = std::unique_ptr<llvm::ExecutionEngine>(
+      llvm::EngineBuilder(std::move(m))
+          .setErrorStr(&error)
+          .setEngineKind(llvm::EngineKind::JIT)
+          .create());
 
-    if (!executionEngine) {
-        throw vdlisp::LispError("ExecutionEngine creation failed: " + error);
-    }
+  if (!executionEngine) {
+    throw vdlisp::LispError("ExecutionEngine creation failed: " + error);
+  }
 }
 
 JITCompiler::~JITCompiler() noexcept = default;
@@ -42,140 +37,99 @@ JITCompiler::~JITCompiler() noexcept = default;
 // Concrete global JIT instance used by the runtime
 JITCompiler global_jit;
 
-auto JITCompiler::compileFunctionFromBuilder(const std::function<llvm::Function *(llvm::Module &)> &builder) -> void * {
-    std::string mname = "jit_module";
-    auto m = std::make_unique<llvm::Module>(mname, context);
+auto JITCompiler::compileFunctionFromBuilder(
+    const std::function<llvm::Function *(llvm::Module &)> &builder) -> void * {
+  std::string mname = "jit_module";
+  auto m = std::make_unique<llvm::Module>(mname, context);
 
-    llvm::Function *f = builder(*m);
-    if (!f)
-        return nullptr;
+  llvm::Function *f = builder(*m);
+  if (f == nullptr) {
+    return nullptr;
+  }
 
-    llvm::Module *mptr = m.get();
+  llvm::Module *mptr = m.get();
 
-    // 如果 IR 用到了运行时桥接函数，需要先把符号映射给 ExecutionEngine。
-    if (llvm::Function *bridge = mptr->getFunction("VDLISP__call_from_jit")) {
-        executionEngine->addGlobalMapping(bridge, reinterpret_cast<void *>(VDLISP__call_from_jit));
-    }
-    if (llvm::Function *interp_bridge = mptr->getFunction("VDLISP__call_interpreted_from_jit")) {
-        executionEngine->addGlobalMapping(interp_bridge, reinterpret_cast<void *>(VDLISP__call_interpreted_from_jit));
-    }
+  // 如果 IR 用到了运行时桥接函数，需要先把符号映射给 ExecutionEngine。
+  if (llvm::Function *bridge = mptr->getFunction("VDLISP__call_from_jit")) {
+    executionEngine->addGlobalMapping(
+        bridge, reinterpret_cast<void *>(VDLISP__call_from_jit));
+  }
+  if (llvm::Function *interp_bridge =
+          mptr->getFunction("VDLISP__call_interpreted_from_jit")) {
+    executionEngine->addGlobalMapping(
+        interp_bridge,
+        reinterpret_cast<void *>(VDLISP__call_interpreted_from_jit));
+  }
 
-    // 自由变量读取辅助函数同样需要显式映射。
-    if (llvm::Function *lookup = mptr->getFunction("VDLISP__jit_lookup_number")) {
-        executionEngine->addGlobalMapping(lookup, reinterpret_cast<void *>(VDLISP__jit_lookup_number));
-    }
+  // 自由变量读取辅助函数同样需要显式映射。
+  if (llvm::Function *lookup = mptr->getFunction("VDLISP__jit_lookup_number")) {
+    executionEngine->addGlobalMapping(
+        lookup, reinterpret_cast<void *>(VDLISP__jit_lookup_number));
+  }
 
-    executionEngine->addModule(std::move(m));
-    executionEngine->finalizeObject();
-    void *ptr = executionEngine->getPointerToFunction(f);
-    if (ptr)
-        module_for_fn[ptr] = mptr;
-    return ptr;
+  executionEngine->addModule(std::move(m));
+  executionEngine->finalizeObject();
+  void *ptr = executionEngine->getPointerToFunction(f);
+  if (ptr != nullptr) {
+    module_for_fn[ptr] = mptr;
+  }
+  return ptr;
 }
 
 auto JITCompiler::releaseFunctionCode(void *fnPtr) noexcept -> void {
-    if (!fnPtr)
-        return;
-    auto it = module_for_fn.find(fnPtr);
-    if (it == module_for_fn.end())
-        return;
-    llvm::Module *mptr = it->second;
-    try {
-        auto res = executionEngine->removeModule(mptr);
-        (void)res;
-    } catch (...) {
-    }
-    for (auto jt = module_for_fn.begin(); jt != module_for_fn.end();) {
-        if (jt->second == mptr)
-            jt = module_for_fn.erase(jt);
-        else
-            ++jt;
-    }
+  if (!fnPtr) return;
+  auto it = module_for_fn.find(fnPtr);
+  if (it == module_for_fn.end()) return;
+  llvm::Module *mptr = it->second;
+  try { (void)executionEngine->removeModule(mptr); } catch (...) {}
+  std::erase_if(module_for_fn, [mptr](const auto &p) { return p.second == mptr; });
 }
 
 auto JITCompiler::getContext() noexcept -> llvm::LLVMContext & {
-    return context;
+  return context;
 }
 
-// 预扫描函数体里可能直接调用到的闭包函数，尽量先把它们一起编译出来。
-static auto collect_called_funcs(const vdlisp::Value &expr, std::vector<vdlisp::FuncData *> &out, vdlisp::Env *closure) -> void {
-    using namespace vdlisp;
-    if (!expr)
-        return;
-    if (expr.get_type() == TPAIR) {
-        vdlisp::PairData *pd = expr.get_pair();
-        const Value &car = pd->car;
-        const Value &cdr = pd->cdr;
-        if (car && car.get_type() == TSYMBOL) {
-            std::string name = *car.get_symbol();
-            Env *e = closure;
-            if (e)
-                retain_env(e);
-            while (e) {
-                auto it = e->map.find(name);
-                if (it != e->map.end()) {
-                    Value v = it->second;
-                    if (v && v.get_type() == TFUNC) {
-                        out.push_back(v.get_func());
-                    }
-                    break;
-                }
-                Env *next = e->parent;
-                if (next)
-                    retain_env(next);
-                release_env(e);
-                e = next;
-            }
-            if (e)
-                release_env(e);
-        }
-        const Value *walk = &expr;
-        while (*walk) {
-            PairData *wpd = walk->get_pair();
-            collect_called_funcs(wpd->car, out, closure);
-            walk = &wpd->cdr;
-        }
+static auto collect_called_funcs(const vdlisp::Value &expr,
+                                 std::vector<vdlisp::FuncData *> &out,
+                                 vdlisp::Env *closure) -> void {
+  if (!expr || expr.get_type() != vdlisp::TPAIR) return;
+  vdlisp::PairData *pd = expr.get_pair();
+  const auto &car = pd->car;
+  if (car && car.get_type() == vdlisp::TSYMBOL) {
+    std::string name = *car.get_symbol();
+    for (auto *e = closure; e; e = e->parent) {
+      auto it = e->map.find(name);
+      if (it != e->map.end()) {
+        if (it->second && it->second.get_type() == vdlisp::TFUNC)
+          out.push_back(it->second.get_func());
+        break;
+      }
     }
+  }
+  for (auto walk = &expr; *walk; walk = &walk->get_pair()->cdr)
+    collect_called_funcs(walk->get_pair()->car, out, closure);
 }
 
 auto JITCompiler::compileFuncData(vdlisp::FuncData *func) -> void * {
-    if (!func)
-        return nullptr;
-    using namespace vdlisp;
+  if (!func) return nullptr;
 
-    // 先递归编译可能的被调函数，可减少第一次进入 JIT 时的桥接开销。
-    std::vector<FuncData *> to_compile;
-    collect_called_funcs(func->body, to_compile, func->closure_env);
-    for (FuncData *fd : to_compile) {
-        if (fd && !fd->compiled_code && !fd->jit_failed && fd != func) {
-            try {
-                void *res = this->compileFuncData(fd);
-                (void)res;
-            } catch (...) {
-                // ignore
-            }
-        }
+  std::vector<vdlisp::FuncData *> to_compile;
+  collect_called_funcs(func->body, to_compile, func->closure_env);
+  for (auto *fd : to_compile) {
+    if (fd && fd != func && !fd->compiled_code && !fd->jit_failed) {
+      try { (void)compileFuncData(fd); } catch (...) {}
     }
+  }
 
-    std::string fname = "jit_fn_" + std::to_string(reinterpret_cast<uintptr_t>(func));
-    auto builder = [func, this, fname](llvm::Module &M) -> llvm::Function * {
-        return build_func_ir(func, M, this->getContext(), fname);
-    };
+  std::string fname = "jit_fn_" + std::to_string(reinterpret_cast<uintptr_t>(func));
+  auto builder = [func, this, &fname](llvm::Module &M) -> llvm::Function * {
+    return build_func_ir(func, M, this->getContext(), fname);
+  };
 
-    void *ptr = nullptr;
-    try {
-        ptr = this->compileFunctionFromBuilder(builder);
-    } catch (const std::exception &e) {
-        func->jit_failed = true;
-        return nullptr;
-    } catch (...) {
-        func->jit_failed = true;
-        return nullptr;
-    }
-    if (!ptr) {
-        func->jit_failed = true;
-        return nullptr;
-    }
-    func->compiled_code = ptr;
-    return ptr;
+  void *ptr = nullptr;
+  try { ptr = compileFunctionFromBuilder(builder); }
+  catch (...) { func->jit_failed = true; return nullptr; }
+  if (!ptr) { func->jit_failed = true; return nullptr; }
+  func->compiled_code = ptr;
+  return ptr;
 }

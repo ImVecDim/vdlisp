@@ -1,16 +1,6 @@
 #include "vdlisp.hpp"
-#include <cctype>
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <readline/history.h>
-#include <readline/readline.h>
-#include <sstream>
-#include <stdexcept>
-#include <unistd.h>
+#include <limits>
 #include <vector>
 
 using namespace vdlisp;
@@ -19,7 +9,7 @@ using namespace vdlisp;
 
 // make_string_list helper removed; templated member implemented in `vdlisp.hpp`
 
-#include "core.hpp"
+#include "lib/lib.hpp"
 #include "helpers.hpp"
 #include "jit/jit.hpp"
 #include "jit/jit_ir_builder.hpp"
@@ -29,7 +19,7 @@ State::State() {
     symbol_intern.reserve(256);
     loaded_modules.reserve(64);
     global = make_env();
-    register_core(*this);
+    register_lib(*this);
     // 语言里把 `#t` 当作 truthy 的全局符号。
     bind_global("#t", make_symbol("#t"));
     // 不额外引入 `else` 关键字，`cond` 默认分支直接写 `#t` 即可。
@@ -49,41 +39,36 @@ auto State::alloc_pair(Value &&car, Value &&cdr) -> PairData * {
     return p;
 }
 
-auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData * {
-    FuncData *f = new FuncData();
-    // 函数对象捕获参数、函数体和闭包环境，是解释器闭包语义的承载体。
-    f->params = std::move(params);
-    f->body = std::move(body);
-    f->closure_env = env;
+// 分配可调用对象的通用模板，避免 alloc_func/alloc_macro 写两遍。
+namespace {
+template <typename T>
+auto alloc_callable_impl(Value &&params, Value &&body, Env *env) -> T * {
+    T *p = new T();
+    p->params = std::move(params);
+    p->body = std::move(body);
+    p->closure_env = env;
     if (env)
         retain_env(env);
+    return p;
+}
+} // namespace
+
+auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData * {
+    auto *f = alloc_callable_impl<FuncData>(std::move(params), std::move(body), env);
     f->num_call_count = 0;
-    f->compiled_code = nullptr;
-    f->jit_failed = false;
     return f;
 }
 
 auto State::alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData * {
-    MacroData *m = new MacroData();
-    // 宏和函数类似，但调用时绑定的是原始 AST 而不是求值后的参数。
-    m->params = std::move(params);
-    m->body = std::move(body);
-    m->closure_env = env;
-    if (env)
-        retain_env(env);
-    return m;
+    return alloc_callable_impl<MacroData>(std::move(params), std::move(body), env);
 }
 
 // Value and Env allocators
-auto State::make_pooled_value(Type t) noexcept -> Value {
-    return Value(t);
-}
+
 
 auto State::alloc_env() -> Env * {
-    Env *e = new Env();
+    auto *e = new Env();
     e->parent = nullptr;
-    e->map.clear();
-    // 大部分局部环境很小，给一个保守初始容量即可。
     e->map.reserve(32);
     return e;
 }
@@ -159,12 +144,12 @@ auto State::make_nil() noexcept -> Value {
     return {};
 }
 auto State::make_number(double n) noexcept -> Value {
-    Value v = make_pooled_value(TNUMBER);
+    Value v{TNUMBER};
     v.set_number(n);
     return v;
 }
 auto State::make_string(const std::string &s) -> Value {
-    Value v = make_pooled_value(TSTRING);
+    Value v{TSTRING};
     v.set_string(alloc_string(s));
     return v;
 }
@@ -173,7 +158,7 @@ auto State::make_symbol(const std::string &s) -> Value {
     auto it = symbol_intern.find(s);
     if (it != symbol_intern.end()) [[likely]]
         return it->second;
-    Value v = make_pooled_value(TSYMBOL);
+    Value v{TSYMBOL};
     v.set_symbol(alloc_string(s));
     symbol_intern[s] = v;
     return v;
@@ -184,17 +169,17 @@ auto State::make_pair(const Value &car, const Value &cdr) -> Value {
 }
 
 auto State::make_pair(Value &&car, Value &&cdr) -> Value {
-    Value v = make_pooled_value(TPAIR);
+    Value v{TPAIR};
     v.set_pair(alloc_pair(std::move(car), std::move(cdr)));
     return v;
 }
 auto State::make_cfunc(const CFunc &fn) noexcept -> Value {
-    Value v = make_pooled_value(TCFUNC);
+    Value v{TCFUNC};
     v.set_cfunc(fn);
     return v;
 }
 auto State::make_prim(const Prim &fn) noexcept -> Value {
-    Value v = make_pooled_value(TPRIM);
+    Value v{TPRIM};
     v.set_prim(fn);
     return v;
 }
@@ -203,7 +188,7 @@ auto State::make_function(const Value &params, const Value &body, Env *env) -> V
 }
 
 auto State::make_function(Value &&params, Value &&body, Env *env) -> Value {
-    Value v = make_pooled_value(TFUNC);
+    Value v{TFUNC};
     v.set_func(alloc_func(std::move(params), std::move(body), env));
     return v;
 }
@@ -212,7 +197,7 @@ auto State::make_macro(const Value &params, const Value &body, Env *env) -> Valu
 }
 
 auto State::make_macro(Value &&params, Value &&body, Env *env) -> Value {
-    Value v = make_pooled_value(TMACRO);
+    Value v{TMACRO};
     v.set_macro(alloc_macro(std::move(params), std::move(body), env));
     return v;
 }
@@ -241,6 +226,8 @@ auto State::bind(const Value &sym, Value v, Env *env) -> Value {
 auto State::set(const Value &sym, Value v, Env *env) -> Value {
     if (!env)
         env = global;
+    if (!sym || sym.get_type() != TSYMBOL)
+        throw LispError("set expects a symbol");
     std::string key = *sym.get_symbol();
     auto e = env;
     while (e) {
@@ -283,13 +270,11 @@ auto State::get_bound(const std::string &name, Env *env) -> Value {
 
 // 先逐个求值实参，再重新组装成列表交给统一调用入口。
 static auto eval_args(State &S, const Value &list, Env *env) -> Value {
-    Value head;
-    Value *last = &head;
+    ListBuilder lb;
     foreach_lisp(list, [&](const Value &car) {
-        *last = S.make_pair(S.eval(car, env), Value());
-        last = &(*last).get_pair()->cdr;
+        lb.add(S, S.eval(car, env));
     });
-    return head;
+    return std::move(lb).done();
 }
 
 // 包装一次调用，把调用点位置信息一致地附着到异常上。
@@ -323,11 +308,11 @@ static void bind_params_to_env(
     bool fill_missing_with_nil);
 
 static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::pair<bool, std::vector<State::SourceLoc>> {
-    State::SourceLoc call_loc;
-    if (!(S.get_source_loc(S.current_expr, call_loc) || S.get_source_loc(expr, call_loc)))
+    State::SourceLoc loc;
+    if (!S.get_source_loc(S.current_expr, loc) && !S.get_source_loc(expr, loc))
         return {false, {}};
-    call_loc.label = label;
-    return {true, {call_loc}};
+    loc.label = label;
+    return {true, {std::move(loc)}};
 }
 
 static auto invoke_closure_body(
@@ -389,13 +374,9 @@ static void bind_params_to_env(
 }
 
 auto State::eval(const Value &expr, Env *env) -> Value {
-    // current_expr 是错误报告的锚点；只有正常完成时才恢复到上一个表达式。
-    bool commit = false;    // 用于指示操作是否正常完成或成功提交
     Value prev = std::exchange(current_expr, expr);
-    struct Defer {
-        State &S; Value &prev; bool &commit;
-        ~Defer() { if (commit) S.current_expr = std::move(prev); }
-    } defer{*this, prev, commit};
+    bool committed = false;
+    struct Guard { State &S; Value &prev; bool &c; ~Guard() { if (c) S.current_expr = std::move(prev); } } guard{*this, prev, committed};
 
     if (!expr)
         return {};
@@ -409,7 +390,7 @@ auto State::eval(const Value &expr, Env *env) -> Value {
             auto it = e->map.find(*expr.get_symbol());
             if (it != e->map.end()) {
                 Value v = it->second;
-                commit = true;
+                committed = true;
                 return v;
             }
             e = e->parent;
@@ -433,7 +414,7 @@ auto State::eval(const Value &expr, Env *env) -> Value {
         // 特殊形式自行控制参数求值时机。
         if (fn.get_type() == TPRIM) {
             Value res = fn.get_prim()(*this, cdr, env);
-            commit = true;
+            committed = true;
             return res;
         }
         // 宏先拿到原始 AST，展开后再把展开结果放回调用点环境继续求值。
@@ -484,17 +465,17 @@ auto State::eval(const Value &expr, Env *env) -> Value {
                 propagate(res);
             }
 
-            commit = true;
+            committed = true;
             return eval(res, env);
         }
         // 普通函数调用遵循 applicative order：先求值实参，再统一调用。
         Value args = eval_args(*this, cdr, env);
         Value res = call(fn, args, env);
-        commit = true;
+        committed = true;
         return res;
     }
     default:
-        commit = true;
+        committed = true;
         return expr;
     }
 }
@@ -578,13 +559,9 @@ auto State::call(const Value &fn, const Value &args, Env *env) -> Value {
         const Value &params = fd->params;
         const Value &body = fd->body;
         Env *closure_env = fd->closure_env;
-        State::SourceLoc call_loc;
-        auto fn_chain = build_call_chain_entry(*this, current_expr, "fn");
-        bool have_call_loc = fn_chain.first;
-        std::vector<State::SourceLoc> call_chain_entry = std::move(fn_chain.second);
-        if (have_call_loc)
-            call_loc = call_chain_entry.front();
-        return invoke_closure_body(*this, closure_env, params, args, body, /*fill_missing_with_nil=*/false, have_call_loc, call_loc, call_chain_entry);
+        auto [have_call_loc, call_chain_entry] = build_call_chain_entry(*this, current_expr, "fn");
+        State::SourceLoc call_loc = have_call_loc ? call_chain_entry.front() : State::SourceLoc{};
+        return invoke_closure_body(*this, closure_env, params, args, body, false, have_call_loc, call_loc, call_chain_entry);
     }
     throw LispError("not a function");
 }

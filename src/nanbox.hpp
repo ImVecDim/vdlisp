@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace vdlisp {
 
@@ -17,20 +18,12 @@ class MacroData;
 class State;
 class Env;
 
-// 原语与内建都使用裸函数指针，尽量压低热路径上的间接调用成本。
 using Prim = Value (*)(State &, const Value &, Env *);
 using CFunc = Value (*)(State &, const Value &);
 
-enum Type {
-    TNIL,
-    TPAIR,
-    TNUMBER,
-    TSTRING,
-    TSYMBOL,
-    TFUNC,  // user function
-    TMACRO, // macro
-    TPRIM,  // special form (unevaluated args)
-    TCFUNC  // c++ builtin
+enum Type : uint8_t {
+    TNIL, TPAIR, TNUMBER, TSTRING, TSYMBOL,
+    TFUNC, TMACRO, TPRIM, TCFUNC
 };
 
 // Forward declarations needed for the implementation
@@ -40,17 +33,14 @@ inline constexpr auto bits_to_double(uint64_t bits) noexcept -> double { return 
 } // namespace detail
 
 struct RcBase {
-  protected:
-    RcBase(size_t init = 1) noexcept : refs_{init} {}
-    ~RcBase() noexcept = default;
-
-  private:
     size_t refs_{1};
+    RcBase() noexcept = default;
+    ~RcBase() noexcept = default;
+    RcBase(const RcBase &) = delete;
+    RcBase &operator=(const RcBase &) = delete;
 
-  public:
     inline __attribute__((always_inline)) void inc_ref() noexcept { ++refs_; }
     inline __attribute__((always_inline)) size_t dec_ref() noexcept { return --refs_; }
-    inline __attribute__((always_inline)) size_t ref_count() const noexcept { return refs_; }
 };
 
 class StringData : public RcBase {
@@ -64,7 +54,7 @@ class Env : public RcBase {
         // 一个环境就是“当前作用域绑定表 + 指向父作用域的链”。
     std::unordered_map<std::string, Value> map;
     Env *parent = nullptr;
-    ~Env();
+    ~Env() noexcept;
 };
 
 // Env 单独提供 retain/release，避免和普通 Value 的引用计数细节混在一起。
@@ -77,32 +67,15 @@ inline __attribute__((always_inline)) void release_env(Env *e) noexcept {
         delete e;
 }
 
-// 小型 RAII 守卫：函数调用里创建的临时环境离开作用域后自动释放。
 struct EnvGuard {
     explicit EnvGuard(Env *e = nullptr) noexcept : e_{e} {}
-    ~EnvGuard() {
-        if (e_)
-            release_env(e_);
-    }
+    ~EnvGuard() { if (e_) release_env(e_); }
     EnvGuard(const EnvGuard &) = delete;
     EnvGuard &operator=(const EnvGuard &) = delete;
-    EnvGuard(EnvGuard &&o) noexcept : e_(o.e_) {
-        o.e_ = nullptr;
-    }
+    EnvGuard(EnvGuard &&o) noexcept : e_(std::exchange(o.e_, nullptr)) {}
     EnvGuard &operator=(EnvGuard &&o) noexcept {
-        if (this != &o) {
-            if (e_)
-                release_env(e_);
-            e_ = o.e_;
-            o.e_ = nullptr;
-        }
+        std::swap(e_, o.e_);
         return *this;
-    }
-    [[nodiscard]] Env *get() const noexcept { return e_; }
-    [[nodiscard]] Env *release() noexcept {
-        Env *t = e_;
-        e_ = nullptr;
-        return t;
     }
 
   private:
@@ -141,18 +114,14 @@ class Value {
 
     // get_type 是解释器最热的函数之一，先走 number 快路径。
     [[nodiscard]] inline auto get_type() const noexcept -> Type {
-        // 非 NaN 模式下整个 64 位就是 IEEE754 double。
         if ((bits & kNaNMask) != kNaNMask) [[unlikely]]
             return TNUMBER;
-
-        // 指针类值从 tag 查表得到具体类型，避免大 switch。
-        constexpr Type kTagMap[16] = {
-            /*0*/ TNIL, /*1*/ TPAIR, /*2*/ TSTRING, /*3*/ TSYMBOL,
-            /*4*/ TFUNC, /*5*/ TMACRO, /*6*/ TPRIM, /*7*/ TCFUNC,
-            /*8*/ TNIL, /*9*/ TNIL, /*10*/ TNIL, /*11*/ TNIL,
-            /*12*/ TNIL, /*13*/ TNIL, /*14*/ TNIL, /*15*/ TNIL};
-        uint8_t idx = static_cast<uint8_t>((bits >> 48) & 0xF);
-        return kTagMap[idx];
+        static constexpr Type kTagMap[16] = {
+            TNIL, TPAIR, TSTRING, TSYMBOL,
+            TFUNC, TMACRO, TPRIM, TCFUNC,
+            TNIL, TNIL, TNIL, TNIL,
+            TNIL, TNIL, TNIL, TNIL};
+        return kTagMap[(bits >> 48) & 0xF];
     }
     [[nodiscard]] auto get_number() const noexcept -> double;
     [[nodiscard]] auto get_pair() const noexcept -> PairData *;
@@ -221,6 +190,8 @@ inline auto Value::get_number() const noexcept -> double {
 inline auto Value::set_number(double value) noexcept -> void {
     release();
     std::memcpy(&bits, &value, sizeof(bits));
+    // NaN bit-pattern collides with NaN-boxing tags, so we can't represent NaN.
+    // Silently convert to 0.0 to maintain type-system invariants.
     if ((bits & kNaNMask) == kNaNMask)
         bits = 0;
 }

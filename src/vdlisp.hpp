@@ -38,7 +38,6 @@ class State {
     [[nodiscard]] auto make_macro(Value &&params, Value &&body, Env *env) -> Value;
 
     // Env 与 Value 的底层分配封装，对上层隐藏具体内存表示。
-    [[nodiscard]] auto make_pooled_value(Type t) noexcept -> Value;
     [[nodiscard]] auto make_env(Env *parent = nullptr) -> Env *;
 
     // 便捷的字符串列表构造器，主要给 argv 等宿主输入使用。
@@ -114,6 +113,17 @@ extern State *jit_active_state;
 
 // 便捷地把一组 Value 拼成 Lisp 列表。
 [[nodiscard]] auto list_of(State &S, std::initializer_list<Value> items) -> Value;
+
+// 工具：消除各处"尾插构造链表"的重复模式
+struct ListBuilder {
+    Value head;
+    Value *last = &head;
+    void add(State &S, Value &&v) {
+        *last = S.make_pair(std::move(v), Value());
+        last = &(*last).get_pair()->cdr;
+    }
+    [[nodiscard]] Value done() && { return std::move(head); }
+};
 
 } // namespace vdlisp
 

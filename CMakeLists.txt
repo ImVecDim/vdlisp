@@ -62,11 +62,12 @@ endif()
 file(GLOB VDL_SOURCES
   ${CMAKE_SOURCE_DIR}/src/*.cpp
   ${CMAKE_SOURCE_DIR}/src/jit/*.cpp
+  ${CMAKE_SOURCE_DIR}/src/lib/*.cpp
 )
 
 add_executable(vdlisp ${VDL_SOURCES})
 # Force C++20 even if external flags add a different -std=...
-target_compile_options(vdlisp PRIVATE -std=c++20)
+target_compile_options(vdlisp PRIVATE -std=c++20 -fexceptions)
 
 # 运行二进制时会按相对路径查找 scripts/lang_basics.lisp，构建后把脚本复制到产物目录旁边。
 add_custom_command(TARGET vdlisp POST_BUILD

@@ -6,10 +6,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 # 先构建，避免用户直接运行测试脚本时没有可执行文件。
-if [ ! -d build ]; then
-  cmake -S . -B build -D ENABLE_LTO=OFF
-fi
-cmake --build build -j$(nproc)
+#if [ ! -d build ]; then
+#  cmake -S . -B build -D ENABLE_LTO=OFF
+#fi
+#cmake --build build -j$(nproc)
 
 
 # 允许外部覆盖被测解释器路径，方便对比不同构建配置。

@@ -15,7 +15,6 @@ class Value;
 namespace vdlisp {
 class FuncData;
 class Value;
-class PairData;
 } // namespace vdlisp
 
 class JITIREmitter {

@@ -59,37 +59,24 @@ static void report_exception(State &S, const std::exception &ex) {
 }
 
 static void repl(State &S) {
-    // REPL 历史写入用户目录，方便交互式试验语言特性。
-    const char *home = getenv("HOME");
     std::string histfile;
-    if (home)
+    if (const char *home = getenv("HOME")) {
         histfile = std::string(home) + "/.VDLISP__history";
-
-    if (!histfile.empty())
         read_history(histfile.c_str());
-
+    }
     while (true) {
         char *cline = readline("> ");
-        if (!cline)
-            break; // EOF (Ctrl-D)
+        if (!cline) break;
         std::string line(cline);
         free(cline);
-        if (line.empty())
-            continue;
+        if (line.empty()) continue;
         add_history(line.c_str());
         try {
             Value e = S.parse(line);
-            if (!e)
-                continue;
-            Value r = S.eval(e, S.global);
-            std::cout << S.to_string(r) << "\n";
-        } catch (const std::exception &ex) {
-            report_exception(S, ex);
-        }
+            if (e) std::cout << S.to_string(S.eval(e, S.global)) << "\n";
+        } catch (const std::exception &ex) { report_exception(S, ex); }
     }
-
-    if (!histfile.empty())
-        write_history(histfile.c_str());
+    if (!histfile.empty()) write_history(histfile.c_str());
 }
 
 // NaN-boxing 依赖 48 位 canonical pointer，这里在启动时做一次硬检查。
@@ -130,18 +117,13 @@ auto main(int argc, char **argv) -> int {
                 std::ostringstream lss;
                 lss << lf.rdbuf();
                 Value le = S.parse_all(lss.str(), langfile.string());
-                if (le)
-                    (void)S.do_list(le, S.global);
+                if (le) (void)S.do_list(le, S.global);
             } else {
                 std::cerr << "warning: failed to open startup helper script: " << langfile << "\n";
             }
         }
     } catch (const std::exception &ex) {
-        // 启动辅助脚本不是硬依赖，失败时给出警告后继续运行解释器。
         std::cerr << "warning: failed to load startup helper script scripts/lang_basics.lisp: " << ex.what() << "\n";
-    } catch (...) {
-        // 保底兜住非标准异常，避免辅助脚本阻断解释器启动。
-        std::cerr << "warning: failed to load startup helper script scripts/lang_basics.lisp: unknown error\n";
     }
     if (argc < 2) {
         repl(S);

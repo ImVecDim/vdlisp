@@ -1,66 +1,45 @@
-#include "core.hpp"
-#include "helpers.hpp"
-#include "require.hpp"
-#include <filesystem>
-#include <fstream>
+#ifndef VDLISP__CORE_HPP
+#define VDLISP__CORE_HPP
+
+#include "../helpers.hpp"
+
+#include <cstdlib>
 #include <functional>
 #include <iostream>
-#include <optional>
-#include <sstream>
-
-using namespace vdlisp;
+#include <utility>
 
 namespace vdlisp {
 
-// 统一检查一元内建参数，避免每个 builtin 自己重复拆表。
-static auto require_unary_args(const Value &args, const char *name) -> Value {
-    if (!args || pair_cdr(args))
-        throw LispError(std::string(name) + " requires exactly one argument");
-    return pair_car(args);
-}
-
-static auto require_binary_args(const Value &args, const char *name) -> std::pair<Value, Value> {
-    if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
-        throw LispError(std::string(name) + " requires exactly two arguments");
-    return {pair_car(args), pair_car(pair_cdr(args))};
-}
-
-static auto require_pair_arg(const Value &args, const char *name) -> Value {
-    Value v = require_unary_args(args, name);
-    if (v && v.get_type() != TPAIR)
-        throw LispError(std::string(name) + " expects a pair");
-    return v;
-}
-
-// 用模板复用数值内建的“取参-检查-运算-回包”流程。
+// 用模板复用数值内建的"取参-检查-运算-回包"流程。
 template <typename Op>
-static Value builtin_arith(State &S, const Value &args, const char *name, Op op) {
+inline Value builtin_arith(State &S, const Value &args, const char *name, Op op) {
     auto [a, b] = require_binary_args(args, name);
     return S.make_number(op(require_number(a, name), require_number(b, name)));
 }
 
 template <typename Cmp>
-static Value builtin_cmp(State &S, const Value &args, const char* name, Cmp cmp) {
+inline Value builtin_cmp(State &S, const Value &args, const char* name, Cmp cmp) {
     auto [a, b] = require_binary_args(args, name);
     return cmp(require_number(a, name), require_number(b, name)) ? S.get_bound("#t", S.global) : Value();
 }
 
-static Value builtin_add(State &S, const Value &args) { return builtin_arith(S, args, "+", std::plus<double>{}); }
-static Value builtin_sub(State &S, const Value &args) { return builtin_arith(S, args, "-", std::minus<double>{}); }
-static Value builtin_mul(State &S, const Value &args) { return builtin_arith(S, args, "*", std::multiplies<double>{}); }
-static Value builtin_div(State &S, const Value &args) { 
+inline Value builtin_add(State &S, const Value &args) { return builtin_arith(S, args, "+", std::plus<double>{}); }
+inline Value builtin_sub(State &S, const Value &args) { return builtin_arith(S, args, "-", std::minus<double>{}); }
+inline Value builtin_mul(State &S, const Value &args) { return builtin_arith(S, args, "*", std::multiplies<double>{}); }
+inline Value builtin_div(State &S, const Value &args) {
     return builtin_arith(S, args, "/", [](double a, double b) {
-        if (b == 0.0) throw LispError("division by zero"); 
+        if (b == 0.0) throw LispError("division by zero");
         return a / b;
-    }); 
+    });
 }
 
-static Value builtin_cmp_lt(State &S, const Value &args) { return builtin_cmp(S, args, "<", std::less<double>{}); }
-static Value builtin_cmp_gt(State &S, const Value &args) { return builtin_cmp(S, args, ">", std::greater<double>{}); }
-static Value builtin_cmp_le(State &S, const Value &args) { return builtin_cmp(S, args, "<=", std::less_equal<double>{}); }
-static Value builtin_cmp_ge(State &S, const Value &args) { return builtin_cmp(S, args, ">=", std::greater_equal<double>{}); }
+inline Value builtin_cmp_lt(State &S, const Value &args) { return builtin_cmp(S, args, "<", std::less<double>{}); }
+inline Value builtin_cmp_gt(State &S, const Value &args) { return builtin_cmp(S, args, ">", std::greater<double>{}); }
+inline Value builtin_cmp_le(State &S, const Value &args) { return builtin_cmp(S, args, "<=", std::less_equal<double>{}); }
+inline Value builtin_cmp_ge(State &S, const Value &args) { return builtin_cmp(S, args, ">=", std::greater_equal<double>{}); }
 
-void register_core(State &S) {
+// 注册解释器启动后默认可用的内建函数与特殊形式。
+inline auto register_core(State &S) -> void {
     // 基础数值运算与比较全部走统一的参数校验辅助函数。
     S.register_builtin("+", builtin_add);
     S.register_builtin("-", builtin_sub);
@@ -119,17 +98,13 @@ void register_core(State &S) {
     });
     S.register_builtin("setcar", [](State &, const Value &args) -> Value {
         auto [p, v] = require_binary_args(args, "setcar");
-        if (!p || p.get_type() != TPAIR)
-            throw LispError("setcar expects a pair");
-        pair_set_car(p, v);
-        return v;
+        if (!p || p.get_type() != TPAIR) throw LispError("setcar expects a pair");
+        pair_set_car(p, v); return v;
     });
     S.register_builtin("setcdr", [](State &, const Value &args) -> Value {
         auto [p, v] = require_binary_args(args, "setcdr");
-        if (!p || p.get_type() != TPAIR)
-            throw LispError("setcdr expects a pair");
-        pair_set_cdr(p, v);
-        return v;
+        if (!p || p.get_type() != TPAIR) throw LispError("setcdr expects a pair");
+        pair_set_cdr(p, v); return v;
     });
 
     S.register_builtin("=", [](State &S, const Value &args) -> Value {
@@ -146,9 +121,6 @@ void register_core(State &S) {
         std::exit(code);
         return {};
     });
-
-    // `require` 单独放在独立编译单元里，便于处理路径与模块缓存。
-    register_require(S);
 
     // 特殊形式：接收未经求值的参数列表，并自行决定求值策略。
     S.register_prim("quote", [](State &, const Value &args, Env *) -> Value {
@@ -242,7 +214,7 @@ void register_core(State &S) {
         return S.make_nil();
     });
 
-    // `apply` 负责把“函数 + 实参列表”重新交给统一调用入口。
+    // `apply` 负责把"函数 + 实参列表"重新交给统一调用入口。
     S.register_prim("apply", [](State &S, const Value &args, Env *env) -> Value {
         Value fnexpr = pair_car(args);
         if (!fnexpr)
@@ -255,3 +227,5 @@ void register_core(State &S) {
 }
 
 } // namespace vdlisp
+
+#endif // VDLISP__CORE_HPP

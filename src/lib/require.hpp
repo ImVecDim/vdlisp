@@ -1,6 +1,8 @@
-#include "require.hpp"
+#ifndef VDLISP__REQUIRE_HPP
+#define VDLISP__REQUIRE_HPP
 
-#include "helpers.hpp"
+#include "../vdlisp.hpp"
+#include "../helpers.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -9,7 +11,8 @@
 
 namespace vdlisp {
 
-void register_require(State &S) {
+// 注册模块加载内建 `require`。
+inline auto register_require(State &S) -> void {
     S.register_builtin("require", [](State &S, const Value &args) -> Value {
         if (!args || !pair_car(args) || pair_car(args).get_type() != TSTRING)
             throw LispError("require requires a string");
@@ -18,10 +21,10 @@ void register_require(State &S) {
         State::SourceLoc loc;
         std::vector<std::string> candidates;
         // 相对路径优先相对当前脚本，再退回进程工作目录。
-        if (!name.empty() && name[0] != '/') {
+        if (!name.empty() && name[0] != '/' && !(name.size() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'))) {
             if (S.current_expr && S.get_source_loc(S.current_expr, loc) && !loc.file.empty()) {
                 auto p = loc.file;
-                auto pos = p.find_last_of('/');
+                auto pos = p.find_last_of("/\\");
                 if (pos != std::string::npos)
                     candidates.push_back(p.substr(0, pos + 1) + name);
             }
@@ -83,3 +86,5 @@ void register_require(State &S) {
 }
 
 } // namespace vdlisp
+
+#endif // VDLISP__REQUIRE_HPP

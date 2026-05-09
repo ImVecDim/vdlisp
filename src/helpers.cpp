@@ -1,9 +1,6 @@
 #include "helpers.hpp"
-#include <cctype>
 #include <cstdlib>
 #include <iostream>
-#include <sstream>
-#include <stdexcept>
 #include <unistd.h>
 
 namespace vdlisp {
@@ -41,7 +38,18 @@ static auto skip_ws_and_comments(const std::string &src, size_t &pos, size_t &li
     }
 }
 
-// 真正的递归下降解析器实现，返回一个 AST Value，并同步维护源码位置信息。
+// quote/quasiquote/unquote 的解析完全相同，只有符号名不同
+static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Value;
+static auto parse_quoted(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name, const char *keyword) -> Value {
+    size_t qline = line;
+    size_t qcol = col;
+    advance_pos(src, pos, line, col);
+    Value inner = parse_at(S, src, pos, line, col, name);
+    Value res = list_of(S, {S.make_symbol(keyword), std::move(inner)});
+    S.set_source_loc(res, name, qline, qcol);
+    return res;
+}
+
 
 static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Value {
     skip_ws_and_comments(src, pos, line, col);
@@ -56,8 +64,7 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
         size_t open_col = col;
 
         advance_pos(src, pos, line, col);
-        Value head = nullptr;
-        Value *last = &head;
+        ListBuilder lb;
         bool closed = false;
         while (true) {
             skip_ws_and_comments(src, pos, line, col);
@@ -68,15 +75,13 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
                 closed = true;
                 break;
             }
-            // 解析列表元素；若遇到点号，则切换到 dotted pair 语义。
             Value e = parse_at(S, src, pos, line, col, name);
             if (e && e.get_type() == TSYMBOL && *e.get_symbol() == ".") {
-                // dotted tail 直接接到最后一个 pair 的 cdr 上。
                 skip_ws_and_comments(src, pos, line, col);
                 if (pos >= src.size())
                     throw LispError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF after . in list");
                 Value tail = parse_at(S, src, pos, line, col, name);
-                *last = tail;
+                *lb.last = std::move(tail);
                 skip_ws_and_comments(src, pos, line, col);
                 if (pos >= src.size() || src[pos] != ')')
                     throw LispError(State::SourceLoc{name, open_line, open_col}, "expected ) after dotted-tail");
@@ -84,43 +89,18 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
                 closed = true;
                 break;
             }
-            // 普通列表节点则继续按链表尾插的方式构造。
-            *last = S.make_pair(std::move(e), Value());
-            PairData *pd = (*last).get_pair();
-            S.set_source_loc(*last, name, open_line, open_col);
-            last = &pd->cdr;
+            lb.add(S, std::move(e));
+            S.set_source_loc(*lb.last, name, open_line, open_col);
         }
-        if (!closed) {
+        if (!closed)
             throw LispError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF while reading list");
-        }
-        return head;
+        return std::move(lb).done();
     } else if (c == '\'') {
-        size_t qline = line;
-        size_t qcol = col;
-
-        advance_pos(src, pos, line, col);
-        Value quoted = parse_at(S, src, pos, line, col, name);
-        Value res = list_of(S, {S.make_symbol("quote"), quoted});
-        S.set_source_loc(res, name, qline, qcol);
-        return res;
+        return parse_quoted(S, src, pos, line, col, name, "quote");
     } else if (c == '`') {
-        size_t qline = line;
-        size_t qcol = col;
-
-        advance_pos(src, pos, line, col);
-        Value qq = parse_at(S, src, pos, line, col, name);
-        Value res = list_of(S, {S.make_symbol("quasiquote"), qq});
-        S.set_source_loc(res, name, qline, qcol);
-        return res;
+        return parse_quoted(S, src, pos, line, col, name, "quasiquote");
     } else if (c == ',') {
-        size_t qline = line;
-        size_t qcol = col;
-
-        advance_pos(src, pos, line, col);
-        Value uq = parse_at(S, src, pos, line, col, name);
-        Value res = list_of(S, {S.make_symbol("unquote"), uq});
-        S.set_source_loc(res, name, qline, qcol);
-        return res;
+        return parse_quoted(S, src, pos, line, col, name, "unquote");
     } else if (c == '"') {
         size_t sline = line;
         size_t scol = col;
@@ -199,31 +179,20 @@ auto State::parse(const std::string &src, const std::string &name) -> Value {
 
 auto State::parse_all(const std::string &src, const std::string &name) -> Value {
     sources[name] = src;
-    size_t pos = 0;
-    size_t line = 1;
-    size_t col = 1;
-    Value head;
-    Value *last = &head;
+    size_t pos = 0, line = 1, col = 1;
+    ListBuilder lb;
     while (pos < src.size()) {
-        // 顶层文件会被解析成“表达式组成的列表”，便于统一顺序执行。
         Value e = parse_at(*this, src, pos, line, col, name);
-        *last = make_pair(std::move(e), Value());
-        PairData *pd = (*last).get_pair();
-        last = &pd->cdr;
+        lb.add(*this, std::move(e));
     }
-    return head;
+    return std::move(lb).done();
 }
 
 auto list_of(State &S, std::initializer_list<Value> items) -> Value {
-    Value head;
-    Value *last = &head;
-    for (auto &it : items) {
-        // initializer_list 元素是只读视图，这里保持复制语义更安全。
-        *last = S.make_pair(it, Value());
-        PairData *pd = (*last).get_pair();
-        last = &pd->cdr;
-    }
-    return head;
+    ListBuilder lb;
+    for (const Value &it : items)
+        lb.add(S, Value(it));
+    return std::move(lb).done();
 }
 
 void State::set_source_loc(const Value &v, const std::string &file, size_t line, size_t col) {
@@ -272,54 +241,34 @@ auto State::get_source_line(const std::string &file, size_t line, std::string &o
 }
 
 void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std::string &msg) {
-    // 终端支持颜色时输出更友好的高亮；否则退回纯文本。
     bool color = isatty(fileno(stderr)) || getenv("VDLISP__COLOR");
-    const char *c_red = "\x1b[1;31m";
-    const char *c_bold = "\x1b[1m";
-    const char *c_reset = "\x1b[0m";
-
-    if (color)
-        std::cerr << c_red;
-    std::cerr << "error: " << loc.file << ":" << loc.line << ":" << loc.col << ": " << msg << "\n";
-    if (color)
-        std::cerr << c_reset;
-
+    auto cerr = [&](const char *s) { if (s) std::cerr << s; };
+    auto with_color = [&](const char *c, auto &&print_fn) {
+        if (color) std::cerr << c;
+        print_fn();
+        if (color) std::cerr << "\x1b[0m";
+    };
+    with_color("\x1b[1;31m", [&]{
+        std::cerr << "error: " << loc.file << ":" << loc.line << ":" << loc.col << ": " << msg << "\n";
+    });
     std::string line;
     if (S.get_source_line(loc.file, loc.line, line)) {
-        if (color)
-            std::cerr << c_bold << line << c_reset << "\n";
-        else
-            std::cerr << line << "\n";
-
+        with_color("\x1b[1m", [&]{ std::cerr << line << "\n"; });
         size_t col_index = loc.col ? loc.col - 1 : 0;
-        std::string caret_spaces;
-        for (size_t i = 0; i < col_index; ++i)
-            caret_spaces.push_back((i < line.size() && line[i] == '\t') ? '\t' : ' ');
-
-        if (color)
-            std::cerr << caret_spaces << c_red << "^" << c_reset << "\n";
-        else
-            std::cerr << caret_spaces << "^" << "\n";
+        std::string caret(col_index, ' ');
+        with_color("\x1b[1;31m", [&]{ std::cerr << caret << "^\n"; });
     }
 }
 
-// 主动清理闭包环境引用，防止解释器退出时残留函数-环境环。
 void clear_closure_env(Value &v) noexcept {
-    if (!v)
-        return;
-    if (v.get_type() == TFUNC) {
-        FuncData *fd = v.get_func();
-        if (fd && fd->closure_env) {
-            release_env(fd->closure_env);
-            fd->closure_env = nullptr;
-        }
-    } else if (v.get_type() == TMACRO) {
-        MacroData *md = v.get_macro();
-        if (md && md->closure_env) {
-            release_env(md->closure_env);
-            md->closure_env = nullptr;
-        }
-    }
+    if (!v) return;
+    Env *env = nullptr;
+    auto clear = [&](auto *p) {
+        if (p) { env = p->closure_env; p->closure_env = nullptr; }
+    };
+    if (v.get_type() == TFUNC) clear(v.get_func());
+    else if (v.get_type() == TMACRO) clear(v.get_macro());
+    if (env) release_env(env);
 }
 
 auto value_equal(const Value &a, const Value &b) -> bool {

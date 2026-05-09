@@ -1,5 +1,118 @@
+---
+# 最严格的 Clang-Format 配置
+# 基于 LLVM 风格，针对 C++20 项目优化
+
+# 基于 LLVM 风格
 BasedOnStyle: LLVM
+
+# 语言标准
+Language: Cpp
+Standard: Cpp20
+
+# 缩进宽度
 IndentWidth: 4
+TabWidth: 4
 UseTab: Never
-ColumnLimit: 0
-AllowShortFunctionsOnASingleLine: All
+
+# 大括号样式：Allman 风格（每个大括号单独一行）
+BreakBeforeBraces: Allman
+
+# 指针和引用对齐
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# 允许在所有控制语句后换行
+AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: true
+AlwaysBreakTemplateDeclarations: Yes
+
+# 列限制
+ColumnLimit: 100
+
+# 缩进
+IndentCaseBlocks: true
+IndentCaseLabels: true
+# IndentExternBlock: AfterColon
+IndentPPDirectives: AfterHash
+IndentRequiresClause: true
+IndentWrappedFunctionNames: false
+
+# 空格控制
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false
+
+# 括号空格
+SpacesInAngles: Never
+SpacesInContainerLiterals: false
+SpacesInCStyleCastParentheses: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# 换行控制
+AllowAllArgumentsOnNextLine: false
+AllowAllConstructorInitializersOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortLambdasOnASingleLine: None
+
+# 二进制运算符换行
+BreakBeforeBinaryOperators: All
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+BreakStringLiterals: true
+
+# 函数声明/定义
+BinPackArguments: false
+BinPackParameters: false
+PackConstructorInitializers: Never
+
+# 排序
+SortIncludes: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '^<(ciso646|clocale|cmath|csignal|csetjmp|cstdarg|cstddef|cstdio|cstdlib|cstring|ctime|cwchar|cwctype)>'
+    Priority:        1
+    SortPriority:    0
+  - Regex:           '^<(algorithm|any|array|atomic|barrier|bit|bitset|charconv|chrono|codecvt|compare|complex|concepts|condition_variable|deque|exception|execution|filesystem|format|forward_list|fstream|functional|future|initializer_list|iomanip|ios|iosfwd|iostream|istream|iterator|latch|limits|list|locale|map|memory|memory_resource|mutex|new|numbers|numeric|optional|ostream|queue|random|ranges|ratio|regex|scoped_allocator|semaphore|set|shared_mutex|source_location|span|sstream|stack|stdexcept|stop_token|streambuf|string|string_view|strstream|syncstream|system_error|thread|tuple|type_traits|typeindex|typeinfo|unordered_map|unordered_set|utility|valarray|variant|vector|version|view)>'
+    Priority:        2
+    SortPriority:    0
+  - Regex:           '^<(windows|winerror|winbase|wingdi|wincrypt|winreg|winuser|winsock2|ws2tcpip)\.h>'
+    Priority:        3
+    SortPriority:    0
+  - Regex:           '^<[[:alnum:]._]+>'
+    Priority:        4
+  - Regex:           '^".*"'
+    Priority:        5
+
+# 注释格式化
+ReflowComments: true
+CommentPragmas: '^ IWYU pragma:'
+
+# 其他
+InsertNewlineAtEOF: true
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+PenaltyBreakAssignment: 2
+PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakString: 1000
+PenaltyExcessCharacter: 1000000
+PenaltyReturnTypeOnItsOwnLine: 60
+PointerBindsToType: false
+QualifierAlignment: Left
+SeparateDefinitionBlocks: Always
