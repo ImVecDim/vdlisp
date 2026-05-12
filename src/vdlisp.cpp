@@ -1,5 +1,6 @@
 #include "vdlisp.hpp"
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <vector>
 
@@ -32,39 +33,33 @@ auto State::alloc_string(const std::string &s) -> StringData * {
 }
 
 auto State::alloc_pair(Value &&car, Value &&cdr) -> PairData * {
-    auto *p = new PairData();
+    auto *p = pair_pool.alloc();
     // 直接 move 进 pair，可避免临时 Value 带来的引用计数抖动。
     p->car = std::move(car);
     p->cdr = std::move(cdr);
     return p;
 }
 
-// 分配可调用对象的通用模板，避免 alloc_func/alloc_macro 写两遍。
-namespace {
-template <typename T>
-auto alloc_callable_impl(Value &&params, Value &&body, Env *env) -> T * {
-    T *p = new T();
-    p->params = std::move(params);
-    p->body = std::move(body);
-    p->closure_env = env;
-    if (env)
-        retain_env(env);
-    return p;
-}
-} // namespace
-
 auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData * {
-    auto *f = alloc_callable_impl<FuncData>(std::move(params), std::move(body), env);
+    auto *f = new FuncData();
+    f->params = std::move(params);
+    f->body = std::move(body);
+    f->closure_env = env;
+    if (env) retain_env(env);
     f->num_call_count = 0;
     return f;
 }
 
 auto State::alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData * {
-    return alloc_callable_impl<MacroData>(std::move(params), std::move(body), env);
+    auto *m = new MacroData();
+    m->params = std::move(params);
+    m->body = std::move(body);
+    m->closure_env = env;
+    if (env) retain_env(env);
+    return m;
 }
 
 // Value and Env allocators
-
 
 auto State::alloc_env() -> Env * {
     auto *e = new Env();
@@ -82,43 +77,35 @@ auto State::make_env(Env *parent) -> Env * {
 }
 
 auto State::shutdown_and_purge_pools() -> void {
-    // 解释器主要靠引用计数回收；退出前主动打断闭包与环境形成的环。
+    // 退出前主动打断闭包与环境形成的环。
     for (auto &kv : symbol_intern) {
-        Value &v = kv.second;
-        clear_closure_env(v);
-        v = Value();
+        clear_closure_env(kv.second);
+        kv.second = Value();
     }
 
-    // 沿着环境链清空绑定，同时断开 parent 指针，避免层层互相保活。
-    if (global) {
-        std::vector<Env *> q;
-        // 遍历期间先 retain，避免边清理边把链条提前释放掉。
-        retain_env(global);
-        q.push_back(global);
-        for (size_t i = 0; i < q.size(); ++i) {
-            auto e = q[i];
-            if (!e)
-                continue;
-            if (e->parent) {
-                retain_env(e->parent);
-                q.push_back(e->parent);
-            }
-            for (auto &mkv : e->map) {
-                Value &val = mkv.second;
-                clear_closure_env(val);
-                val = Value();
-            }
-            e->map.clear();
-            if (e->parent) {
-                release_env(e->parent);
-                e->parent = nullptr;
-            }
+    // 递归清空环境链
+    std::function<void(Env *)> clear_env;
+    clear_env = [&](Env *e) -> void {
+        if (!e) return;
+        if (e->parent) {
+            retain_env(e->parent);
+            clear_env(e->parent);
+            release_env(e->parent);
         }
-        for (auto *p : q)
-            release_env(p);
+        for (auto &mkv : e->map) {
+            clear_closure_env(mkv.second);
+            mkv.second = Value();
+        }
+        e->map.clear();
+        e->parent = nullptr;
+    };
+    if (global) {
+        retain_env(global);
+        clear_env(global);
+        release_env(global);
     }
 
-    // 其余缓存纯粹是加速结构，直接清空即可。
+    pair_pool.purge();
 
     if (global) {
         release_env(global);
@@ -228,16 +215,9 @@ auto State::set(const Value &sym, Value v, Env *env) -> Value {
         env = global;
     if (!sym || sym.get_type() != TSYMBOL)
         throw LispError("set expects a symbol");
-    std::string key = *sym.get_symbol();
-    auto e = env;
-    while (e) {
-        auto it = e->map.find(key);
-        if (it != e->map.end()) [[likely]] {
-            // 原位覆写现有绑定，避免额外 retain/release。
-            it->second = std::move(v);
-            return v;
-        }
-        e = e->parent;
+    if (auto *vp = lookup(*sym.get_symbol(), env)) [[likely]] {
+        *vp = std::move(v);
+        return v;
     }
     // 向上找不到时，退化为在当前环境创建新绑定。
     (void)bind(sym, std::move(v), env);
@@ -250,14 +230,20 @@ void State::bind_global(const std::string &name, Value v) {
 }
 
 auto State::get_bound(const std::string &name, Env *env) -> Value {
+    if (auto *vp = lookup(name, env))
+        return *vp;
+    return {};
+}
+
+auto State::lookup(const std::string &name, Env *env) -> Value * {
     auto e = env ? env : global;
     while (e) {
         auto it = e->map.find(name);
         if (it != e->map.end())
-            return it->second;
+            return &it->second;
         e = e->parent;
     }
-    return {};
+    return nullptr;
 }
 
 // -------------------- parser --------------------
@@ -343,7 +329,7 @@ static void bind_params_to_env(
     const Value *a = &args;
     while (*p) {
         if (p->get_type() == TSYMBOL) {
-            // 裸 symbol 形参表示“剩余参数整体绑定到这个名字”。
+            // 裸 symbol 形参表示"剩余参数整体绑定到这个名字"。
             out[*p->get_symbol()] = *a;
             break;
         }
@@ -384,23 +370,13 @@ auto State::eval(const Value &expr, Env *env) -> Value {
         env = global;
     switch (expr.get_type()) {
     case TSYMBOL: {
-        // `nil` 既可能表示“查不到”，也可能是“变量值就是 nil”，因此这里必须显式沿环境链查 map。
-        auto e = env ? env : global;
-        while (e) {
-            auto it = e->map.find(*expr.get_symbol());
-            if (it != e->map.end()) {
-                Value v = it->second;
-                committed = true;
-                return v;
-            }
-            e = e->parent;
+        if (auto *vp = lookup(*expr.get_symbol(), env)) {
+            committed = true;
+            return *vp;
         }
-        {
-            State::SourceLoc sl;
-            if (get_source_loc(expr, sl)) {
-                throw LispError(sl, std::string("unbound symbol: ") + *expr.get_symbol());
-            }
-        }
+        State::SourceLoc sl;
+        if (get_source_loc(expr, sl))
+            throw LispError(sl, std::string("unbound symbol: ") + *expr.get_symbol());
         throw LispError("unbound symbol: " + *expr.get_symbol());
     }
     case TPAIR: {
@@ -480,6 +456,36 @@ auto State::eval(const Value &expr, Env *env) -> Value {
     }
 }
 
+namespace {
+// 从 args 列表中提取实参的 double 值，失败返回 false。
+static auto extract_numeric_args(const Value &args, std::vector<double> &out) -> bool {
+    for (auto a = &args; *a; a = &a->get_pair()->cdr) {
+        const Value &av = a->get_pair()->car;
+        if (!av || av.get_type() != TNUMBER) return false;
+        out.push_back(av.get_number());
+    }
+    return true;
+}
+
+// 尝试对 FuncData 做 JIT 编译
+static auto attempt_jit_compile(FuncData *fd) -> void {
+    if (!fd || fd->jit_failed || fd->compiled_code || fd->num_call_count <= 3) return;
+    try {
+        void *c = global_jit.compileFuncData(fd);
+        fd->compiled_code = c;
+        if (!c) fd->jit_failed = true;
+    } catch (...) { fd->jit_failed = true; }
+}
+
+// 统一的闭包调用入口（含调用链追踪）
+static auto invoke_func(State &S, FuncData *fd, const Value &args) -> Value {
+    auto [have_call_loc, call_chain_entry] = build_call_chain_entry(S, S.current_expr, "fn");
+    State::SourceLoc call_loc = have_call_loc ? call_chain_entry.front() : State::SourceLoc{};
+    return invoke_closure_body(S, fd->closure_env, fd->params, args, fd->body, false,
+                                have_call_loc, call_loc, call_chain_entry);
+}
+} // namespace
+
 auto State::call(const Value &fn, const Value &args, Env *env) -> Value {
     (void)env;
     if (!fn) [[unlikely]]
@@ -487,81 +493,36 @@ auto State::call(const Value &fn, const Value &args, Env *env) -> Value {
     if (fn.get_type() == TCFUNC) {
         return fn.get_cfunc()(*this, args);
     } else if (fn.get_type() == TFUNC) {
-        // 只有“全部实参都是 number”时，JIT 的 double ABI 才成立。
         FuncData *fd = fn.get_func();
         std::vector<double> darr;
-        const Value *a = &args;
-        bool numeric = true;
-        while (*a) {
-            PairData *apd = a->get_pair();
-            const Value &av = apd->car;
-            if (!av || av.get_type() != TNUMBER) {
-                numeric = false;
-                break;
-            }
-            darr.push_back(av.get_number());
-            a = &apd->cdr;
-        }
+        bool numeric = extract_numeric_args(args, darr);
 
         if (numeric) {
-            // 以数值调用次数作为简易热点判据，热了才值得尝试编译。
             fd->num_call_count++;
-            if (fd->num_call_count > 3 && !fd->compiled_code && !fd->jit_failed) {
-                if (!can_attempt_jit_compile(fd)) {
-                    fd->jit_failed = true;
-                } else {
-                try {
-                    void *c = global_jit.compileFuncData(fd);
-                    if (c) {
-                        fd->compiled_code = c;
-                    } else {
-                        fd->jit_failed = true;
-                    }
-                } catch (...) {
-                    fd->jit_failed = true;
-                }
-                }
-            }
+            attempt_jit_compile(fd);
         }
 
-        if (fd && fd->compiled_code && numeric) {
+        if (fd->compiled_code && numeric) {
             using JitFn = double (*)(double *, int);
-            auto fptr = reinterpret_cast<JitFn>(fd->compiled_code);
-            // 进入机器码前挂上当前 State，给桥接函数做回退与自由变量读取。
             jit_active_state = this;
             double res = 0.0;
             bool jit_threw = false;
             try {
-                res = fptr(darr.empty() ? nullptr : darr.data(), (int)darr.size());
+                res = reinterpret_cast<JitFn>(fd->compiled_code)(
+                    darr.empty() ? nullptr : darr.data(), (int)darr.size());
             } catch (...) {
                 jit_threw = true;
                 res = std::numeric_limits<double>::quiet_NaN();
             }
             jit_active_state = nullptr;
             if (std::isnan(res)) {
-                // NaN 既表示“结果不是纯数值”，也表示“JIT 内部回退失败”，此时单次退回解释器执行。
-                if (jit_threw) {
-                    fd->compiled_code = nullptr;
-                    fd->jit_failed = true;
-                }
-                const Value &params = fd->params;
-                const Value &body = fd->body;
-                Env *closure_env = fd->closure_env;
-                Env *e = make_env(closure_env ? closure_env : global);
-                EnvGuard eg(e);
-                bind_params_to_env(e->map, params, args, /*fill_missing_with_nil=*/false);
-                return do_list(body, e);
+                if (jit_threw) { fd->compiled_code = nullptr; fd->jit_failed = true; }
+                return invoke_func(*this, fd, args);
             }
             return make_number(res);
         }
 
-        // 非数值调用、未编译或回退场景都走解释器闭包执行路径。
-        const Value &params = fd->params;
-        const Value &body = fd->body;
-        Env *closure_env = fd->closure_env;
-        auto [have_call_loc, call_chain_entry] = build_call_chain_entry(*this, current_expr, "fn");
-        State::SourceLoc call_loc = have_call_loc ? call_chain_entry.front() : State::SourceLoc{};
-        return invoke_closure_body(*this, closure_env, params, args, body, false, have_call_loc, call_loc, call_chain_entry);
+        return invoke_func(*this, fd, args);
     }
     throw LispError("not a function");
 }

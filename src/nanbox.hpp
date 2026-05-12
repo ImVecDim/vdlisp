@@ -293,6 +293,9 @@ class PairData : public RcBase {
         // PairData 是 Lisp 链表与 AST 的基础节点。
     Value car;
     Value cdr;
+
+    // 配对分配器使用 slab，operator delete 无需释放内存。
+    static void operator delete(void *p) noexcept {}
 };
 
 // FuncData 保存闭包求值所需的全部运行时信息，也是 JIT 的编译单元。

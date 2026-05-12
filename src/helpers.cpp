@@ -89,8 +89,11 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
                 closed = true;
                 break;
             }
+            Value *prev_last = lb.last;
             lb.add(S, std::move(e));
-            S.set_source_loc(*lb.last, name, open_line, open_col);
+            // 在刚创建的 pair 节点上设置源码位置，而非其 cdr（nil）。
+            // 这样列表中每个 pair 的 car 都带有位置信息，报错时可从 current_expr 追溯到源码行。
+            S.set_source_loc(*prev_last, name, open_line, open_col);
         }
         if (!closed)
             throw LispError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF while reading list");

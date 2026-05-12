@@ -12,6 +12,25 @@ using namespace vdlisp;
 
 namespace {
 
+// 统一的"读文件→解析→执行"辅助，消除 REPL 启动加载与批处理模式之间的重复。
+static auto load_and_run(State &S, const std::string &path, bool verbose = false) -> Value {
+    std::filesystem::path fpath(path);
+    if (!std::filesystem::exists(fpath)) {
+        if (verbose) std::cerr << "warning: file not found: " << path << "\n";
+        return {};
+    }
+    std::ifstream f(fpath);
+    if (!f) {
+        if (verbose) std::cerr << "warning: failed to open file: " << path << "\n";
+        return {};
+    }
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    Value parsed = S.parse_all(ss.str(), path);
+    if (!parsed) return {};
+    return S.do_list(parsed, S.global);
+}
+
 // 以“源码片段 + 光标”的形式打印调用链，主要服务宏展开与嵌套调用报错。
 static void print_call_chain(const State &S, const std::vector<State::SourceLoc> &chain) {
     if (chain.empty())
@@ -110,18 +129,7 @@ auto main(int argc, char **argv) -> int {
     S.bind_global("argv", S.make_string_list(argc, argv, 1));
     // 如果提供了语言层辅助库，启动时自动加载。
     try {
-        std::filesystem::path langfile("scripts/lang_basics.lisp");
-        if (std::filesystem::exists(langfile)) {
-            std::ifstream lf(langfile);
-            if (lf) {
-                std::ostringstream lss;
-                lss << lf.rdbuf();
-                Value le = S.parse_all(lss.str(), langfile.string());
-                if (le) (void)S.do_list(le, S.global);
-            } else {
-                std::cerr << "warning: failed to open startup helper script: " << langfile << "\n";
-            }
-        }
+        load_and_run(S, "scripts/lang_basics.lisp");
     } catch (const std::exception &ex) {
         std::cerr << "warning: failed to load startup helper script scripts/lang_basics.lisp: " << ex.what() << "\n";
     }
@@ -131,18 +139,8 @@ auto main(int argc, char **argv) -> int {
     }
     // 批处理模式：加载文件、解析顶层表达式并按顺序执行。
     try {
-        std::ifstream f(argv[1]);
-        if (!f) {
-            std::cerr << "could not open file: " << argv[1] << "\n";
-            return 1;
-        }
-        std::ostringstream ss;
-        ss << f.rdbuf();
-        Value e = S.parse_all(ss.str(), argv[1]);
-        if (e) {
-            Value r = S.do_list(e, S.global);
-            std::cout << S.to_string(r) << "\n";
-        }
+        Value r = load_and_run(S, argv[1]);
+        std::cout << S.to_string(r) << "\n";
     } catch (const std::exception &ex) {
         report_exception(S, ex);
         return 1;

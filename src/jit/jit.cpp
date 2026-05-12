@@ -50,21 +50,14 @@ auto JITCompiler::compileFunctionFromBuilder(
   llvm::Module *mptr = m.get();
 
   // 如果 IR 用到了运行时桥接函数，需要先把符号映射给 ExecutionEngine。
-  if (llvm::Function *bridge = mptr->getFunction("VDLISP__call_from_jit")) {
-    executionEngine->addGlobalMapping(
-        bridge, reinterpret_cast<void *>(VDLISP__call_from_jit));
-  }
-  if (llvm::Function *interp_bridge =
-          mptr->getFunction("VDLISP__call_interpreted_from_jit")) {
-    executionEngine->addGlobalMapping(
-        interp_bridge,
-        reinterpret_cast<void *>(VDLISP__call_interpreted_from_jit));
-  }
-
-  // 自由变量读取辅助函数同样需要显式映射。
-  if (llvm::Function *lookup = mptr->getFunction("VDLISP__jit_lookup_number")) {
-    executionEngine->addGlobalMapping(
-        lookup, reinterpret_cast<void *>(VDLISP__jit_lookup_number));
+  static const struct { const char *name; void *ptr; } bridge_funcs[] = {
+    {"VDLISP__call_from_jit", reinterpret_cast<void *>(VDLISP__call_from_jit)},
+    {"VDLISP__call_interpreted_from_jit", reinterpret_cast<void *>(VDLISP__call_interpreted_from_jit)},
+    {"VDLISP__jit_lookup_number", reinterpret_cast<void *>(VDLISP__jit_lookup_number)},
+  };
+  for (auto &bf : bridge_funcs) {
+    if (auto *fn = mptr->getFunction(bf.name))
+      executionEngine->addGlobalMapping(fn, bf.ptr);
   }
 
   executionEngine->addModule(std::move(m));

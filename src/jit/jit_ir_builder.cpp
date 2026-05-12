@@ -15,33 +15,15 @@
 using namespace vdlisp;
 using namespace llvm;
 
-static auto contains_unsupported_jit_form(const vdlisp::Value &expr) -> bool {
-  if (!expr || expr.get_type() != vdlisp::TPAIR) return false;
-  auto op = pair_car(expr);
-  if (!op || op.get_type() != vdlisp::TSYMBOL) return true;
-  for (auto walk = pair_cdr(expr); walk; walk = pair_cdr(walk)) {
-    if (contains_unsupported_jit_form(pair_car(walk))) return true;
-  }
-  return false;
-}
-
-auto can_attempt_jit_compile(vdlisp::FuncData *func) -> bool {
-  if (!func) return false;
-  for (auto body = func->body; body; body = pair_cdr(body)) {
-    if (contains_unsupported_jit_form(pair_car(body))) return false;
-  }
-  return true;
-}
-
-static auto make_ft(llvm::LLVMContext &ctx) -> llvm::FunctionType * {
-  auto *dblPtr = llvm::PointerType::getUnqual(llvm::Type::getDoubleTy(ctx));
-  return llvm::FunctionType::get(llvm::Type::getDoubleTy(ctx), {dblPtr, llvm::Type::getInt32Ty(ctx)}, false);
-}
+// emitExpr 对不支持的语法形式直接返回 nullptr，build_func_ir 自然回退到 interpreter stub，
+// 因此无需额外的预检 —— 上面的早期检查是冗余的。
 
 static auto build_interpreter_stub(vdlisp::FuncData *func, llvm::Module &M,
                                    llvm::LLVMContext &context,
                                    const std::string &name) -> llvm::Function * {
-  auto *F = llvm::Function::Create(make_ft(context), llvm::Function::ExternalLinkage, name, &M);
+  auto *dblPtr = llvm::PointerType::getUnqual(llvm::Type::getDoubleTy(context));
+  auto *ft = llvm::FunctionType::get(llvm::Type::getDoubleTy(context), {dblPtr, llvm::Type::getInt32Ty(context)}, false);
+  auto *F = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, name, &M);
   auto *BB = llvm::BasicBlock::Create(context, "entry", F);
   llvm::IRBuilder<> ir(BB);
 
@@ -61,10 +43,10 @@ auto build_func_ir(vdlisp::FuncData *func, llvm::Module &M,
                    llvm::LLVMContext &context, const std::string &name)
     -> llvm::Function * {
   if (!func) return nullptr;
-  if (!can_attempt_jit_compile(func))
-    return build_interpreter_stub(func, M, context, name);
 
-  auto *F = llvm::Function::Create(make_ft(context), llvm::Function::ExternalLinkage, name, &M);
+  auto *dblPtr = llvm::PointerType::getUnqual(llvm::Type::getDoubleTy(context));
+  auto *ft = llvm::FunctionType::get(llvm::Type::getDoubleTy(context), {dblPtr, llvm::Type::getInt32Ty(context)}, false);
+  auto *F = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, name, &M);
 
   BasicBlock *BB = BasicBlock::Create(context, "entry", F);
   IRBuilder<> entry_ir(BB);

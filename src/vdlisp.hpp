@@ -4,11 +4,36 @@
 #include "nanbox.hpp"
 #include <cstddef>
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace vdlisp {
+
+// Slab 分配器：PairData 的缓存行感知 allocator。
+// 顺序分配的 pair 落在一块连续内存中，链表遍历时利用缓存行预取。
+// PairData 的 operator delete 已被改写为空，slab 块在 shutdown 时统一回收。
+// 块列表使用 std::vector<std::unique_ptr<Block>>，避免 vector 扩容时指针移动。
+class PairPool {
+    static constexpr size_t kBlockSize = 16384;
+    struct Block {
+        alignas(alignof(PairData)) char data[kBlockSize];
+    };
+    std::vector<std::unique_ptr<Block>> blocks_;
+    size_t used_ = kBlockSize;
+  public:
+    auto alloc() -> PairData * {
+        if (blocks_.empty() || used_ + sizeof(PairData) > kBlockSize) {
+            blocks_.push_back(std::make_unique<Block>());
+            used_ = 0;
+        }
+        auto *p = reinterpret_cast<PairData *>(blocks_.back()->data + used_);
+        used_ += sizeof(PairData);
+        return new (p) PairData();
+    }
+    void purge() { blocks_.clear(); used_ = kBlockSize; }
+};
 
 class State {
   public:
@@ -94,6 +119,9 @@ class State {
     [[nodiscard]] auto alloc_func(Value &&params, Value &&body, Env *env) -> FuncData *;
     [[nodiscard]] auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData *;
 
+    // Pair 缓存行感知分配器。
+    PairPool pair_pool;
+
     // Env 的底层分配口，和上层 make_env 分离便于后续替换策略。
     [[nodiscard]] auto alloc_env() -> Env *;
 
@@ -103,6 +131,7 @@ class State {
     auto register_builtin(const std::string &name, const CFunc &fn) -> void;
     auto register_prim(const std::string &name, const Prim &fn) -> void;
     [[nodiscard]] auto get_bound(const std::string &name, Env *env) -> Value;
+    [[nodiscard]] auto lookup(const std::string &name, Env *env) -> Value *;
     auto bind_global(const std::string &name, Value v) -> void;
     [[nodiscard]] auto bind(const Value &sym, Value v, Env *env) -> Value;
     [[nodiscard]] auto set(const Value &sym, Value v, Env *env) -> Value;

@@ -19,7 +19,6 @@ class Value;
 
 class JITIREmitter {
   public:
-    // 负责把受支持的 Lisp 子集直接翻译成 double 型 LLVM IR。
     JITIREmitter(vdlisp::FuncData *func, llvm::Function *F, llvm::LLVMContext &context);
     auto emitExpr(const vdlisp::Value &expr) -> llvm::Value *;
     auto finalize() -> llvm::Function *;
@@ -29,11 +28,24 @@ class JITIREmitter {
     llvm::Function *F;
     llvm::LLVMContext &context;
     llvm::IRBuilder<> ir;
+
+    llvm::Type *dblTy;
+    llvm::Constant *dblZero;
+    llvm::Constant *dblOne;
+
     std::unordered_map<std::string, llvm::AllocaInst *> locals;
     std::unordered_map<std::string, int> param_index;
 
-    // 局部变量第一次写入时在入口块里补 alloca，保证 SSA 之外仍可进行简单赋值。
     auto ensure_local(const std::string &name) -> llvm::AllocaInst *;
+
+    // 按语法形式拆分的子发射器，每个只负责一种 Lisp 子语言构造。
+    auto emitSymbol(const vdlisp::Value &expr) -> llvm::Value *;
+    auto emitLet(const vdlisp::Value &rest) -> llvm::Value *;
+    auto emitCond(const vdlisp::Value &rest) -> llvm::Value *;
+    auto emitWhile(const vdlisp::Value &rest) -> llvm::Value *;
+    auto emitSet(const vdlisp::Value &rest) -> llvm::Value *;
+    auto emitGenericForm(const std::string &opname, const vdlisp::Value &rest) -> llvm::Value *;
+    auto emitFuncCall(const std::string &opname, const std::vector<llvm::Value *> &vals) -> llvm::Value *;
 };
 
 #endif // JIT_JIT_IR_EMITTER_HPP
