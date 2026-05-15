@@ -27,29 +27,24 @@ auto print_error_with_loc(const State &S, const State::SourceLoc &loc, const std
 
 [[nodiscard]] auto value_equal(const Value &a, const Value &b) -> bool;
 
-// 这类小函数处于热路径，直接内联可减少解释器分派开销。
-[[nodiscard]] inline __attribute__((always_inline)) auto type_name(const Value &v) -> std::string {
-    if (!v)
-        return std::string("nil");
-    return v.type_name();
-}
-
 [[nodiscard]] inline __attribute__((always_inline)) auto require_number(const Value &v, const char *who) -> double {
     if (!v || v.get_type() != TNUMBER) [[unlikely]]
-        throw LispError(std::string(who) + std::string(": expected number, got ") + std::string(type_name(v)));
+        throw LispError(std::string(who) + std::string(": expected number, got ") + v.type_name());
     return v.get_number();
 }
 
 // 对 pair 的访问在整个解释器里极其频繁，统一封装可让主逻辑更可读。
 // 用模板消除 pair_car/pair_cdr 中的重复。
 template <auto Member>
-[[nodiscard]] inline __attribute__((always_inline)) auto pair_access(const Value &p) noexcept -> Value {
-    if (!p || p.get_type() != TPAIR)
-        return {};
+[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_access(const Value &p) noexcept {
+    if (!p || p.get_type() != TPAIR) {
+        static const Value kNil;
+        return kNil;
+    }
     return (p.get_pair()->*Member);
 }
-[[nodiscard]] inline __attribute__((always_inline)) auto pair_car(const Value &p) noexcept -> Value { return pair_access<&PairData::car>(p); }
-[[nodiscard]] inline __attribute__((always_inline)) auto pair_cdr(const Value &p) noexcept -> Value { return pair_access<&PairData::cdr>(p); }
+[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_car(const Value &p) noexcept { return pair_access<&PairData::car>(p); }
+[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_cdr(const Value &p) noexcept { return pair_access<&PairData::cdr>(p); }
 [[nodiscard]] inline __attribute__((always_inline)) auto is_pair(const Value &p) noexcept -> bool {
     return p && p.get_type() == TPAIR;
 }
@@ -69,8 +64,13 @@ inline __attribute__((always_inline)) void pair_set_cdr(const Value &p, const Va
 // 断开闭包对环境的引用，主要用于进程退出前主动打破引用环。
 void clear_closure_env(Value &v) noexcept;
 
-inline void foreach_lisp(Value list, auto&& F) {
-    for (Value o = list; o; o = pair_cdr(o)) F(pair_car(o));
+inline void foreach_lisp(const Value &list, auto&& F) {
+    const Value *cur = &list;
+    while (*cur && cur->get_type() == TPAIR) {
+        PairData *pd = cur->get_pair();
+        F(pd->car);
+        cur = &pd->cdr;
+    }
 }
 
 // 统一检查一元内建参数，避免每个 builtin 自己重复拆表。

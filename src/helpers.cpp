@@ -30,8 +30,14 @@ static auto skip_ws_and_comments(const std::string &src, size_t &pos, size_t &li
             continue;
         }
         if (c == ';') {
-            while (pos < src.size() && src[pos] != '\n')
-                advance_pos(src, pos, line, col);
+            auto nl = src.find('\n', pos);
+            if (nl == std::string::npos) {
+                pos = src.size();
+            } else {
+                ++line;
+                col = 1;
+                pos = nl + 1;
+            }
             continue;
         }
         break;
@@ -198,7 +204,7 @@ auto list_of(State &S, std::initializer_list<Value> items) -> Value {
     return std::move(lb).done();
 }
 
-void State::set_source_loc(const Value &v, const std::string &file, size_t line, size_t col) {
+void State::set_source_loc(const Value &v, std::string_view file, size_t line, size_t col) {
     if (!v)
         return;
     SourceLoc loc;
@@ -218,7 +224,7 @@ auto State::get_source_loc(const Value &v, SourceLoc &out) const -> bool {
     return true;
 }
 
-auto State::get_source_line(const std::string &file, size_t line, std::string &out) const -> bool {
+auto State::get_source_line(std::string_view file, size_t line, std::string &out) const -> bool {
     auto it = sources.find(file);
     if (it == sources.end())
         return false;

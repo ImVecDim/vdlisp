@@ -1,14 +1,12 @@
 #include "vdlisp.hpp"
 #include <cmath>
-#include <functional>
 #include <limits>
+#include <optional>
 #include <vector>
 
 using namespace vdlisp;
 
 // -------------------- helpers --------------------
-
-// make_string_list helper removed; templated member implemented in `vdlisp.hpp`
 
 #include "lib/lib.hpp"
 #include "helpers.hpp"
@@ -83,26 +81,20 @@ auto State::shutdown_and_purge_pools() -> void {
         kv.second = Value();
     }
 
-    // 递归清空环境链
-    std::function<void(Env *)> clear_env;
-    clear_env = [&](Env *e) -> void {
-        if (!e) return;
-        if (e->parent) {
-            retain_env(e->parent);
-            clear_env(e->parent);
-            release_env(e->parent);
-        }
+    // 迭代清空环境链（不会 delete 任何 Env，仅打断引用环）
+    std::vector<Env *> stack;
+    if (global) stack.push_back(global);
+    while (!stack.empty()) {
+        Env *e = stack.back();
+        stack.pop_back();
+        if (e->parent)
+            stack.push_back(e->parent);
         for (auto &mkv : e->map) {
             clear_closure_env(mkv.second);
             mkv.second = Value();
         }
         e->map.clear();
         e->parent = nullptr;
-    };
-    if (global) {
-        retain_env(global);
-        clear_env(global);
-        release_env(global);
     }
 
     pair_pool.purge();
@@ -140,22 +132,18 @@ auto State::make_string(const std::string &s) -> Value {
     v.set_string(alloc_string(s));
     return v;
 }
-auto State::make_symbol(const std::string &s) -> Value {
+auto State::make_symbol(std::string_view s) -> Value {
     // 符号做 intern，保证同名 symbol 可按身份快速比较。
     auto it = symbol_intern.find(s);
     if (it != symbol_intern.end()) [[likely]]
         return it->second;
     Value v{TSYMBOL};
-    v.set_symbol(alloc_string(s));
-    symbol_intern[s] = v;
+    std::string key(s);
+    v.set_symbol(alloc_string(key));
+    symbol_intern[std::move(key)] = v;
     return v;
 }
-auto State::make_pair(const Value &car, const Value &cdr) -> Value {
-    // 左值版本统一转发到右值版本，保持分配逻辑只有一份。
-    return make_pair(Value(car), Value(cdr));
-}
-
-auto State::make_pair(Value &&car, Value &&cdr) -> Value {
+auto State::make_pair(Value car, Value cdr) -> Value {
     Value v{TPAIR};
     v.set_pair(alloc_pair(std::move(car), std::move(cdr)));
     return v;
@@ -170,20 +158,12 @@ auto State::make_prim(const Prim &fn) noexcept -> Value {
     v.set_prim(fn);
     return v;
 }
-auto State::make_function(const Value &params, const Value &body, Env *env) -> Value {
-    return make_function(Value(params), Value(body), env);
-}
-
-auto State::make_function(Value &&params, Value &&body, Env *env) -> Value {
+auto State::make_function(Value params, Value body, Env *env) -> Value {
     Value v{TFUNC};
     v.set_func(alloc_func(std::move(params), std::move(body), env));
     return v;
 }
-auto State::make_macro(const Value &params, const Value &body, Env *env) -> Value {
-    return make_macro(Value(params), Value(body), env);
-}
-
-auto State::make_macro(Value &&params, Value &&body, Env *env) -> Value {
+auto State::make_macro(Value params, Value body, Env *env) -> Value {
     Value v{TMACRO};
     v.set_macro(alloc_macro(std::move(params), std::move(body), env));
     return v;
@@ -248,10 +228,6 @@ auto State::lookup(const std::string &name, Env *env) -> Value * {
 
 // -------------------- parser --------------------
 
-// parser helpers are implemented in `src/helpers.cpp`
-
-// Parse helpers implemented in src/helpers.cpp
-
 // -------------------- eval --------------------
 
 // 先逐个求值实参，再重新组装成列表交给统一调用入口。
@@ -265,24 +241,23 @@ static auto eval_args(State &S, const Value &list, Env *env) -> Value {
 
 // 包装一次调用，把调用点位置信息一致地附着到异常上。
 template <typename Fn>
-static auto with_call_chain(State &S, bool have_call_loc, const State::SourceLoc &call_loc, const std::vector<State::SourceLoc> &call_chain_entry, Fn &&fn) -> Value {
+static auto with_call_chain(State &S, bool have_call_loc, const State::SourceLoc &call_loc, std::vector<State::SourceLoc> call_chain_entry, Fn &&fn) -> Value {
     try {
         return fn();
     } catch (const LispError &le) {
         if (have_call_loc) {
-            std::vector<State::SourceLoc> new_chain = call_chain_entry;
             if (!le.call_chain.empty())
-                new_chain.insert(new_chain.end(), le.call_chain.begin(), le.call_chain.end());
+                call_chain_entry.insert(call_chain_entry.end(), le.call_chain.begin(), le.call_chain.end());
             if (le.has_loc) {
-                throw LispError(le.loc, le.what(), new_chain);
+                throw LispError(le.loc, le.what(), std::move(call_chain_entry));
             } else {
-                throw LispError(call_loc, le.what(), new_chain);
+                throw LispError(call_loc, le.what(), std::move(call_chain_entry));
             }
         }
         throw;
     } catch (const std::exception &ex) {
         if (have_call_loc)
-            throw LispError(call_loc, ex.what(), call_chain_entry);
+            throw LispError(call_loc, ex.what(), std::move(call_chain_entry));
         throw;
     }
 }
@@ -293,12 +268,12 @@ static void bind_params_to_env(
     const Value &args,
     bool fill_missing_with_nil);
 
-static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::pair<bool, std::vector<State::SourceLoc>> {
+static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::optional<std::vector<State::SourceLoc>> {
     State::SourceLoc loc;
     if (!S.get_source_loc(S.current_expr, loc) && !S.get_source_loc(expr, loc))
-        return {false, {}};
+        return std::nullopt;
     loc.label = label;
-    return {true, {std::move(loc)}};
+    return std::vector{std::move(loc)};
 }
 
 static auto invoke_closure_body(
@@ -360,9 +335,13 @@ static void bind_params_to_env(
 }
 
 auto State::eval(const Value &expr, Env *env) -> Value {
-    Value prev = std::exchange(current_expr, expr);
-    bool committed = false;
-    struct Guard { State &S; Value &prev; bool &c; ~Guard() { if (c) S.current_expr = std::move(prev); } } guard{*this, prev, committed};
+    bool ok = false;
+    struct ExprGuard {
+        State &S; Value prev; bool &ok;
+        ExprGuard(State &S, const Value &expr, bool &ok)
+            : S(S), prev(std::exchange(S.current_expr, expr)), ok(ok) {}
+        ~ExprGuard() { if (ok) S.current_expr = std::move(prev); }
+    } guard{*this, expr, ok};
 
     if (!expr)
         return {};
@@ -371,7 +350,7 @@ auto State::eval(const Value &expr, Env *env) -> Value {
     switch (expr.get_type()) {
     case TSYMBOL: {
         if (auto *vp = lookup(*expr.get_symbol(), env)) {
-            committed = true;
+            ok = true;
             return *vp;
         }
         State::SourceLoc sl;
@@ -390,7 +369,7 @@ auto State::eval(const Value &expr, Env *env) -> Value {
         // 特殊形式自行控制参数求值时机。
         if (fn.get_type() == TPRIM) {
             Value res = fn.get_prim()(*this, cdr, env);
-            committed = true;
+            ok = true;
             return res;
         }
         // 宏先拿到原始 AST，展开后再把展开结果放回调用点环境继续求值。
@@ -402,13 +381,13 @@ auto State::eval(const Value &expr, Env *env) -> Value {
             // 记录宏调用点与宏定义点，方便把展开错误串成一条调用链。
             State::SourceLoc call_loc;
             std::vector<State::SourceLoc> call_chain_entry;
-            auto macro_chain = build_call_chain_entry(*this, expr, "macro");
-            bool have_call_loc = macro_chain.first;
+            auto chain = build_call_chain_entry(*this, expr, "macro");
+            bool have_call_loc = chain.has_value();
             if (have_call_loc) {
-                call_loc = macro_chain.second.front();
+                call_loc = chain->front();
                 if (car && car.get_type() == TSYMBOL)
                     call_loc.label = std::string("macro ") + *car.get_symbol();
-                call_chain_entry = macro_chain.second;
+                call_chain_entry = std::move(*chain);
                 call_chain_entry.front() = call_loc;
                 State::SourceLoc def_loc;
                 if (md && md->body && get_source_loc(md->body, def_loc)) {
@@ -420,38 +399,30 @@ auto State::eval(const Value &expr, Env *env) -> Value {
 
             Value res = invoke_closure_body(*this, closure_env, params, cdr, body, /*fill_missing_with_nil=*/true, have_call_loc, call_loc, call_chain_entry);
 
-            // 展开结果里的每个节点都继承调用点位置，这样后续报错能回到宏调用处。
+            // 展开结果继承调用点位置，避免报错指向宏定义处。
             if (res && have_call_loc) {
-                std::function<void(const Value &)> propagate;
-                propagate = [&](const Value &v) -> void {
-                    if (!v)
-                        return;
+                auto propagate = [&](const Value &v, const auto &self) -> void {
+                    if (!v) return;
                     set_source_loc(v, call_loc.file, call_loc.line, call_loc.col);
-                    auto it = src_call_chain_map.find(v.identity_key());
-                    std::vector<State::SourceLoc> new_chain = call_chain_entry;
-                    if (it != src_call_chain_map.end()) {
-                        new_chain.insert(new_chain.end(), it->second.begin(), it->second.end());
-                    }
-                    src_call_chain_map[v.identity_key()] = new_chain;
                     if (is_pair(v)) {
-                        propagate(pair_car(v));
-                        propagate(pair_cdr(v));
+                        self(pair_car(v), self);
+                        self(pair_cdr(v), self);
                     }
                 };
-                propagate(res);
+                propagate(res, propagate);
             }
 
-            committed = true;
+            ok = true;
             return eval(res, env);
         }
         // 普通函数调用遵循 applicative order：先求值实参，再统一调用。
         Value args = eval_args(*this, cdr, env);
-        Value res = call(fn, args, env);
-        committed = true;
-        return res;
+        Value fres = call(fn, args, env);
+        ok = true;
+        return fres;
     }
     default:
-        committed = true;
+        ok = true;
         return expr;
     }
 }
@@ -479,10 +450,11 @@ static auto attempt_jit_compile(FuncData *fd) -> void {
 
 // 统一的闭包调用入口（含调用链追踪）
 static auto invoke_func(State &S, FuncData *fd, const Value &args) -> Value {
-    auto [have_call_loc, call_chain_entry] = build_call_chain_entry(S, S.current_expr, "fn");
-    State::SourceLoc call_loc = have_call_loc ? call_chain_entry.front() : State::SourceLoc{};
+    auto chain = build_call_chain_entry(S, S.current_expr, "fn");
+    bool have_call_loc = chain.has_value();
+    State::SourceLoc call_loc = have_call_loc ? chain->front() : State::SourceLoc{};
     return invoke_closure_body(S, fd->closure_env, fd->params, args, fd->body, false,
-                                have_call_loc, call_loc, call_chain_entry);
+                                have_call_loc, call_loc, std::move(*chain));
 }
 } // namespace
 
@@ -540,4 +512,4 @@ auto State::to_string(const Value &v) -> std::string {
     return v.to_repr(*this);
 }
 
-// 解析辅助与 REPL 入口都被拆到其他编译单元，以便这里聚焦运行时主逻辑。
+

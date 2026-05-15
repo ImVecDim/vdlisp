@@ -73,11 +73,17 @@ auto JITIREmitter::emitSymbol(const vdlisp::Value &expr) -> llvm::Value * {
   llvm::FunctionType *ft = FunctionType::get(dblTy, {i8ptr, i8ptr}, false);
   llvm::FunctionCallee callee = M->getOrInsertFunction("VDLISP__jit_lookup_number", ft);
 
+  // 缓存 GlobalStringPtr，避免同一符号重复创建 LLVM global 常量
+  std::string sym_name = *expr.get_symbol();
+  auto &g_str = global_strings[sym_name];
+  if (!g_str)
+      g_str = ir.CreateGlobalStringPtr(sym_name);
+
   auto env_addr = reinterpret_cast<uintptr_t>(
       (func != nullptr) && (func->closure_env != nullptr) ? func->closure_env : nullptr);
   llvm::Constant *env_ptr = ConstantExpr::getIntToPtr(
       ConstantInt::get(llvm::Type::getInt64Ty(context), static_cast<uint64_t>(env_addr)), i8ptr);
-  return ir.CreateCall(callee, {env_ptr, ir.CreateGlobalStringPtr(*expr.get_symbol())});
+  return ir.CreateCall(callee, {env_ptr, g_str});
 }
 
 auto JITIREmitter::emitLet(const vdlisp::Value &rest) -> llvm::Value * {
@@ -210,13 +216,10 @@ auto JITIREmitter::emitSet(const vdlisp::Value &rest) -> llvm::Value * {
   auto it = locals.find(name);
   if (it != locals.end()) { ir.CreateStore(valV, it->second); return valV; }
 
-  // 形参：同时写入 alloca 和 args 数组
+  // 形参：写入 alloca（JIT 不支持递归，无需回写 args 数组）
   auto pit = param_index.find(name);
   if (pit != param_index.end()) {
     ir.CreateStore(valV, ensure_local(name));
-    llvm::Value *idxv = ConstantInt::get(llvm::Type::getInt64Ty(context), pit->second);
-    llvm::Value *gep = ir.CreateInBoundsGEP(dblTy, F->getArg(0), {idxv});
-    ir.CreateStore(valV, gep);
     return valV;
   }
 

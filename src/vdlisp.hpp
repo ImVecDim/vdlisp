@@ -11,6 +11,19 @@
 
 namespace vdlisp {
 
+// 透明哈希/等值比较，支持 string_view 在 unordered_map<string, T> 中查找
+struct StringHash {
+    using is_transparent = void;
+    auto operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
+    auto operator()(const std::string &s) const { return std::hash<std::string>{}(s); }
+};
+struct StringEqual {
+    using is_transparent = void;
+    auto operator()(std::string_view a, const std::string &b) const { return a == b; }
+    auto operator()(const std::string &a, std::string_view b) const { return a == b; }
+    auto operator()(const std::string &a, const std::string &b) const { return a == b; }
+};
+
 // Slab 分配器：PairData 的缓存行感知 allocator。
 // 顺序分配的 pair 落在一块连续内存中，链表遍历时利用缓存行预取。
 // PairData 的 operator delete 已被改写为空，slab 块在 shutdown 时统一回收。
@@ -28,6 +41,9 @@ class PairPool {
             blocks_.push_back(std::make_unique<Block>());
             used_ = 0;
         }
+        // 对齐（新块 used_=0 已对齐，跳过）
+        if (used_ > 0)
+            used_ = (used_ + alignof(PairData) - 1) & ~(alignof(PairData) - 1);
         auto *p = reinterpret_cast<PairData *>(blocks_.back()->data + used_);
         used_ += sizeof(PairData);
         return new (p) PairData();
@@ -39,7 +55,7 @@ class State {
   public:
     // 运行时的核心对象：持有全局环境、符号表、源码映射与模块缓存。
     Env *global = nullptr;
-    std::unordered_map<std::string, Value> symbol_intern;
+    std::unordered_map<std::string, Value, StringHash, StringEqual> symbol_intern;
 
     State();
 
@@ -50,17 +66,12 @@ class State {
     [[nodiscard]] auto make_nil() noexcept -> Value;
     [[nodiscard]] auto make_number(double n) noexcept -> Value;
     [[nodiscard]] auto make_string(const std::string &s) -> Value;
-    [[nodiscard]] auto make_symbol(const std::string &s) -> Value;
-    [[nodiscard]] auto make_pair(const Value &car, const Value &cdr) -> Value;
-    // Overload taking rvalue refs to avoid an extra move when caller can provide temporaries
-    [[nodiscard]] auto make_pair(Value &&car, Value &&cdr) -> Value;
+    [[nodiscard]] auto make_symbol(std::string_view s) -> Value;
+    [[nodiscard]] auto make_pair(Value car, Value cdr) -> Value;
     [[nodiscard]] auto make_cfunc(const CFunc &fn) noexcept -> Value;
-    [[nodiscard]] auto make_function(const Value &params, const Value &body, Env *env) -> Value;
-    // Overload taking rvalue refs for lower-cost construction when possible
-    [[nodiscard]] auto make_function(Value &&params, Value &&body, Env *env) -> Value;
+    [[nodiscard]] auto make_function(Value params, Value body, Env *env) -> Value;
     [[nodiscard]] auto make_prim(const Prim &fn) noexcept -> Value;
-    [[nodiscard]] auto make_macro(const Value &params, const Value &body, Env *env) -> Value;
-    [[nodiscard]] auto make_macro(Value &&params, Value &&body, Env *env) -> Value;
+    [[nodiscard]] auto make_macro(Value params, Value body, Env *env) -> Value;
 
     // Env 与 Value 的底层分配封装，对上层隐藏具体内存表示。
     [[nodiscard]] auto make_env(Env *parent = nullptr) -> Env *;
@@ -94,7 +105,7 @@ class State {
         size_t col = 0;
         std::string label;
     };
-    auto set_source_loc(const Value &v, const std::string &file, size_t line, size_t col) -> void;
+    auto set_source_loc(const Value &v, std::string_view file, size_t line, size_t col) -> void;
     auto get_source_loc(const Value &v, SourceLoc &out) const -> bool;
 
     // 当前正在求值的表达式；异常时故意保留，供顶层错误报告读取。
@@ -105,11 +116,11 @@ class State {
     std::unordered_map<uint64_t, std::vector<SourceLoc>> src_call_chain_map;
 
     // 已载入源码文本，用于报错时回显源码行。
-    std::unordered_map<std::string, std::string> sources;
+    std::unordered_map<std::string, std::string, StringHash, StringEqual> sources;
     // `require` 模块缓存，键尽量使用规范化路径。
     std::unordered_map<std::string, Value> loaded_modules;
     // 返回指定源码行；若源码不存在则返回 false。
-    [[nodiscard]] auto get_source_line(const std::string &file, size_t line, std::string &out) const -> bool;
+    [[nodiscard]] auto get_source_line(std::string_view file, size_t line, std::string &out) const -> bool;
 
   private:
     // 具体对象的堆分配细节都收敛在这里。

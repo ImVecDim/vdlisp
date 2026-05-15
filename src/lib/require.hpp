@@ -26,7 +26,7 @@ inline auto register_require(State &S) -> void {
                 auto p = loc.file;
                 auto pos = p.find_last_of("/\\");
                 if (pos != std::string::npos)
-                    candidates.push_back(p.substr(0, pos + 1) + name);
+                    candidates.push_back(std::string(p.substr(0, pos + 1)) + name);
             }
             candidates.push_back(name);
         } else {
@@ -51,11 +51,8 @@ inline auto register_require(State &S) -> void {
             if (it != S.loaded_modules.end())
                 return it->second;
 
-            std::ifstream f;
-            if (!key.empty() && std::filesystem::exists(std::filesystem::path(key), ec))
-                f.open(key);
-            else
-                f.open(cand);
+            // 直接打开，无需重复 exists 检查
+            std::ifstream f(key);
             if (!f) {
                 tried.push_back(key);
                 continue;

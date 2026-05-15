@@ -72,20 +72,20 @@ VDLISP__call_from_jit(void *funcdata_ptr, double *args, int argc) noexcept -> do
 extern "C" [[nodiscard]] inline auto
 VDLISP__call_interpreted_from_jit(void *funcdata_ptr, double *args,
                                   int argc) noexcept -> double {
-  try {
-    auto *fd = reinterpret_cast<vdlisp::FuncData *>(funcdata_ptr);
-    if (fd == nullptr) return std::numeric_limits<double>::quiet_NaN();
-    fd->inc_ref();
-    void *saved_code = fd->compiled_code;
-    bool saved_failed = fd->jit_failed;
-    fd->compiled_code = nullptr;
-    fd->jit_failed = true;
-    double result = call_via_jit_bridge(funcdata_ptr, args, argc);
-    fd->compiled_code = saved_code;
-    fd->jit_failed = saved_failed;
-    fd->dec_ref();
-    return result;
-  } catch (...) { return std::numeric_limits<double>::quiet_NaN(); }
+  auto *fd = reinterpret_cast<vdlisp::FuncData *>(funcdata_ptr);
+  if (fd == nullptr) return std::numeric_limits<double>::quiet_NaN();
+  fd->inc_ref();
+  void *saved_code = fd->compiled_code;
+  bool saved_failed = fd->jit_failed;
+  fd->compiled_code = nullptr;
+  fd->jit_failed = true;
+  double result = std::numeric_limits<double>::quiet_NaN();
+  try { result = call_via_jit_bridge(funcdata_ptr, args, argc); }
+  catch (...) {}
+  fd->compiled_code = saved_code;
+  fd->jit_failed = saved_failed;
+  fd->dec_ref();
+  return result;
 }
 
 // 自由变量查询只支持 number；查不到或类型不符都返回

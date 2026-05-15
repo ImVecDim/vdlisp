@@ -67,7 +67,7 @@ inline auto register_core(State &S) -> void {
     });
     S.register_builtin("type", [](State &S, const Value &args) -> Value {
         Value v = require_unary_args(args, "type");
-        return S.make_symbol(type_name(v));
+        return S.make_symbol(v.type_name());
     });
     S.register_builtin("parse", [](State &S, const Value &args) -> Value {
         Value v = require_unary_args(args, "parse");

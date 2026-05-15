@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -45,7 +46,7 @@ struct RcBase {
 
 class StringData : public RcBase {
   public:
-    explicit StringData(const std::string &s) : value(s) {}
+    explicit StringData(std::string_view s) : value(s) {}
     std::string value;
 };
 
@@ -74,7 +75,10 @@ struct EnvGuard {
     EnvGuard &operator=(const EnvGuard &) = delete;
     EnvGuard(EnvGuard &&o) noexcept : e_(std::exchange(o.e_, nullptr)) {}
     EnvGuard &operator=(EnvGuard &&o) noexcept {
-        std::swap(e_, o.e_);
+        if (this != &o) {
+            release_env(e_);
+            e_ = std::exchange(o.e_, nullptr);
+        }
         return *this;
     }
 
@@ -307,6 +311,7 @@ class FuncData : public RcBase {
     size_t num_call_count = 0;
     void *compiled_code = nullptr;
     bool jit_failed = false;
+    bool compiling = false; // 防止递归 JIT 编译形成环
 };
 
 // 宏只参与展开，不走 JIT，因此结构比函数更简单。

@@ -13,6 +13,29 @@ static auto shows_as_jit_func(const FuncData *fd) -> bool {
     return fd && (fd->compiled_code || fd->num_call_count > 3);
 }
 
+// release_payload 的销毁函数表，用查表代替 switch 分发
+using Destructor = void (*)(void *p) noexcept;
+static void destroy_pair(void *p) noexcept { delete static_cast<PairData *>(p); }
+static void destroy_string(void *p) noexcept { delete static_cast<StringData *>(p); }
+static void destroy_func(void *p) noexcept {
+    auto *fd = static_cast<FuncData *>(p);
+    if (fd->compiled_code) { global_jit.releaseFunctionCode(fd->compiled_code); fd->compiled_code = nullptr; }
+    if (fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
+    delete fd;
+}
+static void destroy_macro(void *p) noexcept { delete static_cast<MacroData *>(p); }
+constexpr Destructor kDestructors[] = {
+    nullptr,          // TNIL
+    destroy_pair,     // TPAIR
+    nullptr,          // TNUMBER
+    destroy_string,   // TSTRING
+    destroy_string,   // TSYMBOL
+    destroy_func,     // TFUNC
+    destroy_macro,    // TMACRO
+    nullptr,          // TPRIM
+    nullptr,          // TCFUNC
+};
+
 } // namespace
 
 Env::~Env() noexcept {
@@ -22,9 +45,6 @@ Env::~Env() noexcept {
         parent = nullptr;
     }
 }
-
-// JIT compiler instance is provided by `global_jit` declared in the JIT header.
-// The concrete `JITCompiler global_jit` definition lives in `src/jit/jit.cpp`.
 
 // -------------------- Value implementation --------------------
 
@@ -73,20 +93,9 @@ auto Value::operator=(std::nullptr_t) noexcept -> Value & {
 void Value::release_payload(Type t, void *p) noexcept {
     if (!p) return;
     if (static_cast<RcBase *>(p)->dec_ref() != 0) return;
-    switch (t) {
-    case TPAIR: delete static_cast<PairData *>(p); break;
-    case TSTRING: [[fallthrough]];
-    case TSYMBOL: delete static_cast<StringData *>(p); break;
-    case TFUNC: {
-        auto *fd = static_cast<FuncData *>(p);
-        if (fd->compiled_code) { global_jit.releaseFunctionCode(fd->compiled_code); fd->compiled_code = nullptr; }
-        if (fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
-        delete fd;
-        break;
-    }
-    case TMACRO: delete static_cast<MacroData *>(p); break;
-    default: break;
-    }
+    size_t idx = static_cast<size_t>(t);
+    if (idx < sizeof(kDestructors) / sizeof(kDestructors[0]) && kDestructors[idx])
+        kDestructors[idx](p);
 }
 
 // High-level helpers centralized on Value

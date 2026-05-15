@@ -35,6 +35,7 @@ class JITIREmitter {
 
     std::unordered_map<std::string, llvm::AllocaInst *> locals;
     std::unordered_map<std::string, int> param_index;
+    std::unordered_map<std::string, llvm::Constant *> global_strings;
 
     auto ensure_local(const std::string &name) -> llvm::AllocaInst *;
 

@@ -104,7 +104,9 @@ static auto collect_called_funcs(const vdlisp::Value &expr,
 }
 
 auto JITCompiler::compileFuncData(vdlisp::FuncData *func) -> void * {
-  if (!func) return nullptr;
+  if (!func || func->compiling) return nullptr;
+  func->compiling = true;
+  struct CompileGuard { vdlisp::FuncData *fd; ~CompileGuard() { if (fd) fd->compiling = false; } } cg{func};
 
   std::vector<vdlisp::FuncData *> to_compile;
   collect_called_funcs(func->body, to_compile, func->closure_env);
