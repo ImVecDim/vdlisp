@@ -3,10 +3,10 @@
 
 #include "../state.hpp"
 
+#include <boost/container/small_vector.hpp>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <vector>
 
 namespace vdlisp {
 
@@ -18,7 +18,7 @@ inline auto register_require(State &S) -> void {
         std::string name = *pair_car(args).get_string();
 
         SourceLoc loc;
-        std::vector<std::string> candidates;
+        boost::container::small_vector<std::string, 4> candidates;
         // 相对路径优先相对当前脚本，再退回进程工作目录。
         if (!name.empty() && name[0] != '/' && !(name.size() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'))) {
             if (S.current_expr && S.get_source_loc(S.current_expr, loc) && !loc.file.empty()) {
@@ -33,7 +33,7 @@ inline auto register_require(State &S) -> void {
         }
 
         std::error_code ec;
-        std::vector<std::string> tried;
+        boost::container::small_vector<std::string, 4> tried;
 
         for (const auto &cand : candidates) {
             // 规范化路径后再查缓存，避免同一个模块被不同相对路径重复加载。

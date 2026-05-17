@@ -1,4 +1,5 @@
 #include "helpers.hpp"
+#include <charconv>
 #include <cstdlib>
 #include <iostream>
 #include <unistd.h>
@@ -6,8 +7,16 @@
 namespace vdlisp {
 
 // Lisp 读取器里的分隔符集合：一旦遇到这些字符，当前 token 就结束。
-static auto is_delim(char c) noexcept -> bool {
-    return std::isspace((unsigned char)c) || c == '(' || c == ')' || c == '\'' || c == '"' || c == ';' || c == '`' || c == ',';
+// 用编译期查表替代运行时多分支判断，消除解析热路径上的分支预测开销。
+static constexpr auto kDelim = [] {
+    std::array<bool, 256> t{};
+    t['('] = t[')'] = t['\''] = t['"'] = t[';'] = t['`'] = t[','] = true;
+    // std::isspace 在 MinGW 上不是 constexpr，手动列空白字符
+    t[' '] = t['\t'] = t['\n'] = t['\r'] = t['\v'] = t['\f'] = true;
+    return t;
+}();
+[[gnu::always_inline]] inline static auto is_delim(char c) noexcept -> bool {
+    return kDelim[static_cast<unsigned char>(c)];
 }
 
 // string_view 游标：消费时 remove_prefix，避免 src+pos 双参数
@@ -140,18 +149,21 @@ static auto parse_at(State &S, std::string_view &cur, size_t &line, size_t &col,
         return v;
     } else {
         const char *tok_start = cur.data();
+        const char *tok_end = tok_start;
         size_t tline = line;
         size_t tcol = col;
-        while (!cur.empty() && !is_delim(cur.front()))
+        while (!cur.empty() && !is_delim(cur.front())) {
             advance(cur, line, col);
-        std::string tok(tok_start, cur.data() - tok_start);
-        char *endp = nullptr;
-        double val = strtod(tok.c_str(), &endp);
-        if (endp != tok.c_str() && *endp == '\0') {
+            tok_end = cur.data();
+        }
+        double val;
+        auto [ptr, ec] = std::from_chars(tok_start, tok_end, val);
+        if (ec == std::errc{} && ptr == tok_end) {
             Value v = S.make_number(val);
             S.set_source_loc(v, name, tline, tcol);
             return v;
         }
+        std::string_view tok(tok_start, tok_end - tok_start);
         if (tok == "nil")
             return {};
         Value v = S.make_symbol(tok);
@@ -239,14 +251,14 @@ void print_error_with_loc(const State &S, const SourceLoc &loc, const std::strin
 }
 
 void clear_closure_env(Value &v) noexcept {
+    // 仅断开闭包对环境的引用指针（不断释放引用计数），
+    // 实际 env 释放由 FuncData / MacroData 析构函数统一负责。
     if (!v) return;
-    Env *env = nullptr;
-    auto clear = [&](auto *p) {
-        if (p) { env = p->closure_env; p->closure_env = nullptr; }
-    };
-    if (v.get_type() == TFUNC) clear(v.get_func());
-    else if (v.get_type() == TMACRO) clear(v.get_macro());
-    if (env) release_env(env);
+    if (v.get_type() == TFUNC) {
+        if (auto *fd = v.get_func()) fd->closure_env = nullptr;
+    } else if (v.get_type() == TMACRO) {
+        if (auto *md = v.get_macro()) md->closure_env = nullptr;
+    }
 }
 
 auto value_equal(const Value &a, const Value &b) -> bool {

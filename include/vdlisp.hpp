@@ -1,3 +1,4 @@
+#pragma once
 #ifndef VDLISP__VDLISP_HPP
 #define VDLISP__VDLISP_HPP
 
@@ -9,8 +10,6 @@
 #include <array>
 #include <bit>
 #include <cstdint>
-#include <cstring>
-#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -19,6 +18,8 @@
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <boost/unordered/unordered_flat_map.hpp>
 
 
 // ---- DLL 导出/导入宏 ----
@@ -80,36 +81,46 @@ struct RcBase {
     RcBase(const RcBase &) = delete;
     RcBase &operator=(const RcBase &) = delete;
 
-    inline __attribute__((always_inline)) void inc_ref() noexcept { ++refs_; }
-    inline __attribute__((always_inline)) size_t dec_ref() noexcept { return --refs_; }
+    [[gnu::always_inline]] inline void inc_ref() noexcept { ++refs_; }
+    [[gnu::always_inline]] inline size_t dec_ref() noexcept { return --refs_; }
 };
 
 // ---- StringData ----
 
 class StringData : public RcBase {
   public:
+    StringData() = default;
     explicit StringData(std::string_view s) : value(s) {}
     std::string value;
+    static void operator delete(void *p) noexcept {}  // slab 分配
 };
+
+// ---- intrusive_ptr ADL 钩子前向声明 ----
+// Env 仅需不完整类型即可声明；必须在 Env 类体之前，
+// 否则 intrusive_ptr<Env> 成员实例化时两阶段查找失败。
+inline void intrusive_ptr_add_ref(Env *e) noexcept;
+inline void intrusive_ptr_release(Env *e) noexcept;
+inline void retain_env(Env *e) noexcept;
+inline void release_env(Env *e) noexcept;
 
 // ---- Env（作用域环境） ----
 
 class VDLISP_API Env : public RcBase {
   public:
-    std::unordered_map<std::string, Value> map;
-    Env *parent = nullptr;
-    ~Env() noexcept;
+    boost::unordered_flat_map<std::string, Value> map;
+    boost::intrusive_ptr<Env> parent;
 };
 
-// ---- Env 引用计数辅助 ----
+// ---- Env 引用计数 / intrusive_ptr 定义 ----
 
-inline __attribute__((always_inline)) void retain_env(Env *e) noexcept {
+[[gnu::always_inline]] inline void retain_env(Env *e) noexcept {
     if (e) e->inc_ref();
 }
-
-inline __attribute__((always_inline)) void release_env(Env *e) noexcept {
+[[gnu::always_inline]] inline void release_env(Env *e) noexcept {
     if (e && e->dec_ref() == 0) delete e;
 }
+[[gnu::always_inline]] inline void intrusive_ptr_add_ref(Env *e) noexcept { e->inc_ref(); }
+[[gnu::always_inline]] inline void intrusive_ptr_release(Env *e) noexcept { if (e->dec_ref() == 0) delete e; }
 
 struct EnvGuard {
     explicit EnvGuard(Env *e = nullptr) noexcept : e_(e) {}
@@ -228,21 +239,18 @@ class VDLISP_API Value {
 // ---- Value 内联实现 ----
 
 inline auto Value::get_number() const noexcept -> double {
-    double result;
-    static_assert(sizeof(double) == sizeof(bits), "Double must be 64-bit");
-    std::memcpy(&result, &bits, sizeof(result));
-    return result;
+    return std::bit_cast<double>(bits);
 }
 
 inline auto Value::set_number(double value) noexcept -> void {
     release();
-    std::memcpy(&bits, &value, sizeof(bits));
+    bits = std::bit_cast<uint64_t>(value);
     if ((bits & kNaNMask) == kNaNMask)
         bits = 0;
 }
 
 template <uint64_t Tag, typename DataT>
-inline __attribute__((always_inline)) auto Value::get_payload_raw() const noexcept -> DataT * {
+[[gnu::always_inline]] inline auto Value::get_payload_raw() const noexcept -> DataT * {
     return reinterpret_cast<DataT *>(bits & kPayloadMask);
 }
 
@@ -257,32 +265,29 @@ inline void Value::set_payload_raw(DataT *ptr) noexcept {
 
 template <uint64_t Tag, typename Fn>
 inline auto Value::get_fn_raw() const noexcept -> Fn {
-    Fn fn;
     uint64_t payload = bits & kPayloadMask;
-    std::memcpy(&fn, &payload, sizeof(fn));
-    return fn;
+    return std::bit_cast<Fn>(payload);
 }
 
 template <uint64_t Tag, typename Fn>
 inline auto Value::set_fn_raw(Fn fn) noexcept -> void {
     release();
-    uint64_t payload = 0;
-    std::memcpy(&payload, &fn, sizeof(fn));
+    uint64_t payload = std::bit_cast<uint64_t>(fn);
     bits = Tag | (payload & kPayloadMask);
 }
 
-inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData * {
+[[gnu::always_inline]] inline auto Value::get_pair() const noexcept -> PairData * {
     return get_payload_raw<kTagPair, PairData>();
 }
 inline auto Value::set_pair(PairData *ptr) noexcept -> void { set_payload_raw<kTagPair, PairData>(ptr); }
 
-inline __attribute__((always_inline)) auto Value::get_string() const noexcept -> std::string * {
+[[gnu::always_inline]] inline auto Value::get_string() const noexcept -> std::string * {
     auto *sd = get_payload_raw<kTagString, StringData>();
     return sd ? &sd->value : nullptr;
 }
 inline auto Value::set_string(StringData *ptr) noexcept -> void { set_payload_raw<kTagString, StringData>(ptr); }
 
-inline __attribute__((always_inline)) auto Value::get_symbol() const noexcept -> std::string * {
+[[gnu::always_inline]] inline auto Value::get_symbol() const noexcept -> std::string * {
     auto *sd = get_payload_raw<kTagSymbol, StringData>();
     return sd ? &sd->value : nullptr;
 }
@@ -297,13 +302,13 @@ inline auto Value::set_prim(Prim fn) noexcept -> void { set_fn_raw<kTagPrim, Pri
 inline auto Value::get_cfunc() const noexcept -> CFunc { return get_fn_raw<kTagCFunc, CFunc>(); }
 inline auto Value::set_cfunc(CFunc fn) noexcept -> void { set_fn_raw<kTagCFunc, CFunc>(fn); }
 
-inline __attribute__((always_inline)) auto Value::retain() const noexcept -> void {
+[[gnu::always_inline]] inline auto Value::retain() const noexcept -> void {
     Type t = get_type();
     if (!is_refcounted(t)) return;
     retain_payload(t, payload_ptr());
 }
 
-inline __attribute__((always_inline)) auto Value::release() noexcept -> void {
+[[gnu::always_inline]] inline auto Value::release() noexcept -> void {
     Type t = get_type();
     if (!is_refcounted(t)) return;
     release_payload(t, payload_ptr());
@@ -325,12 +330,12 @@ inline auto Value::is_refcounted(Type t) noexcept -> bool {
     return static_cast<size_t>(t) < std::size(kIsRefcounted) && kIsRefcounted[static_cast<size_t>(t)];
 }
 
-inline __attribute__((always_inline)) void Value::retain_payload(Type t, void *p) noexcept {
+[[gnu::always_inline]] inline void Value::retain_payload(Type t, void *p) noexcept {
     if (p) static_cast<RcBase *>(p)->inc_ref();
 }
 
 // ---- PairData ----
-// operator delete 为空：PairData 由 PairPool / boost::object_pool 管理生命周期，
+// operator delete 为空：PairData 由 SlabPool 管理生命周期，
 // 引用计数归零时仅调用析构函数释放子对象，内存由 pool 统一回收。
 
 class PairData : public RcBase {
@@ -341,21 +346,31 @@ class PairData : public RcBase {
 };
 
 // ---- FuncData ----
+// 析构函数负责释放闭包环境引用；operator delete 为空（slab 分配）。
 
 class FuncData : public RcBase {
   public:
     Value params;
     Value body;
     Env *closure_env = nullptr;
+    ~FuncData() {
+        if (closure_env) { release_env(closure_env); closure_env = nullptr; }
+    }
+    static void operator delete(void *p) noexcept {}
 };
 
 // ---- MacroData ----
+// 同理，环境释放移入析构函数。
 
 class MacroData : public RcBase {
   public:
     Value params;
     Value body;
     Env *closure_env = nullptr;
+    ~MacroData() {
+        if (closure_env) { release_env(closure_env); closure_env = nullptr; }
+    }
+    static void operator delete(void *p) noexcept {}
 };
 
 // ============================================================================
@@ -387,7 +402,7 @@ VDLISP_API auto print_error_with_loc(const State &S, const SourceLoc &loc, const
 VDLISP_API [[nodiscard]] auto value_equal(const Value &a, const Value &b) -> bool;
 
 // 数值参数检查
-[[nodiscard]] inline __attribute__((always_inline)) auto require_number(const Value &v, const char *who) -> double {
+[[nodiscard]] [[gnu::always_inline]] inline auto require_number(const Value &v, const char *who) -> double {
     if (!v || v.get_type() != TNUMBER) [[unlikely]]
         throw LispError(std::string(who) + ": expected number, got " + std::string(v.type_name()));
     return v.get_number();
@@ -396,30 +411,30 @@ VDLISP_API [[nodiscard]] auto value_equal(const Value &a, const Value &b) -> boo
 // ---- pair 访问 ----
 
 template <auto Member>
-[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_access(const Value &p) noexcept {
+[[nodiscard]] [[gnu::always_inline]] inline const Value& pair_access(const Value &p) noexcept {
     if (!p || p.get_type() != TPAIR) {
         static const Value kNil;
         return kNil;
     }
     return (p.get_pair()->*Member);
 }
-[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_car(const Value &p) noexcept { return pair_access<&PairData::car>(p); }
-[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_cdr(const Value &p) noexcept { return pair_access<&PairData::cdr>(p); }
+[[nodiscard]] [[gnu::always_inline]] inline const Value& pair_car(const Value &p) noexcept { return pair_access<&PairData::car>(p); }
+[[nodiscard]] [[gnu::always_inline]] inline const Value& pair_cdr(const Value &p) noexcept { return pair_access<&PairData::cdr>(p); }
 
-[[nodiscard]] inline __attribute__((always_inline)) auto is_pair(const Value &p) noexcept -> bool {
+[[nodiscard]] [[gnu::always_inline]] inline auto is_pair(const Value &p) noexcept -> bool {
     return p && p.get_type() == TPAIR;
 }
-[[nodiscard]] inline __attribute__((always_inline)) auto is_symbol(const Value &p, const std::string &name) -> bool {
+[[nodiscard]] [[gnu::always_inline]] inline auto is_symbol(const Value &p, const std::string &name) -> bool {
     return p && p.get_type() == TSYMBOL && *p.get_symbol() == name;
 }
 
 template <auto Member>
-inline __attribute__((always_inline)) void pair_set(const Value &p, const Value &v) noexcept {
+[[gnu::always_inline]] inline void pair_set(const Value &p, const Value &v) noexcept {
     if (!p || p.get_type() != TPAIR) return;
     p.get_pair()->*Member = v;
 }
-inline __attribute__((always_inline)) void pair_set_car(const Value &p, const Value &v) noexcept { pair_set<&PairData::car>(p, v); }
-inline __attribute__((always_inline)) void pair_set_cdr(const Value &p, const Value &v) noexcept { pair_set<&PairData::cdr>(p, v); }
+[[gnu::always_inline]] inline void pair_set_car(const Value &p, const Value &v) noexcept { pair_set<&PairData::car>(p, v); }
+[[gnu::always_inline]] inline void pair_set_cdr(const Value &p, const Value &v) noexcept { pair_set<&PairData::cdr>(p, v); }
 
 // 遍历 Lisp 列表
 inline void foreach_lisp(const Value &list, auto&& F) {
@@ -432,19 +447,19 @@ inline void foreach_lisp(const Value &list, auto&& F) {
 }
 
 // 参数校验辅助
-[[nodiscard]] inline __attribute__((always_inline)) auto require_unary_args(const Value &args, const char *name) -> Value {
+[[nodiscard]] [[gnu::always_inline]] inline auto require_unary_args(const Value &args, const char *name) -> Value {
     if (!args || pair_cdr(args))
         throw LispError(std::string(name) + " requires exactly one argument");
     return pair_car(args);
 }
 
-[[nodiscard]] inline __attribute__((always_inline)) auto require_binary_args(const Value &args, const char *name) -> std::pair<Value, Value> {
+[[nodiscard]] [[gnu::always_inline]] inline auto require_binary_args(const Value &args, const char *name) -> std::pair<Value, Value> {
     if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
         throw LispError(std::string(name) + " requires exactly two arguments");
     return {pair_car(args), pair_car(pair_cdr(args))};
 }
 
-[[nodiscard]] inline __attribute__((always_inline)) auto require_pair_arg(const Value &args, const char *name) -> Value {
+[[nodiscard]] [[gnu::always_inline]] inline auto require_pair_arg(const Value &args, const char *name) -> Value {
     Value v = require_unary_args(args, name);
     if (v && v.get_type() != TPAIR)
         throw LispError(std::string(name) + " expects a pair");

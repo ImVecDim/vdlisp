@@ -15,7 +15,7 @@ namespace vdlisp {
 
 // ---- 内部辅助类型 ----
 
-// 透明哈希，支持 string_view 在 unordered_map<string, T> 中查找
+// 透明哈希，支持 string_view 在 unordered_flat_map<string, T> 中查找
 struct StringHash {
     using is_transparent = void;
     auto operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
@@ -28,27 +28,31 @@ struct StringEqual {
     auto operator()(const std::string &a, const std::string &b) const { return a == b; }
 };
 
-// Slab 分配器：PairData 的缓存行感知 allocator。
-// 顺序分配的 pair 落在一块连续内存中，链表遍历时利用缓存行预取。
-// PairData 的 operator delete 已被改写为空，slab 块在 shutdown 时统一回收。
-class PairPool {
+// Slab 分配器：泛型模板版，支持 PairData / StringData / FuncData / MacroData。
+// 顺序分配的对象落在一块连续内存中，遍历时利用缓存行预取。
+// 目标类型的 operator delete 已被改写为空，slab 块在 shutdown 时统一回收。
+template <typename T>
+class SlabPool {
     static constexpr size_t kBlockSize = 16384;
     struct Block {
-        alignas(alignof(PairData)) char data[kBlockSize];
+        alignas(alignof(T)) char data[kBlockSize];
     };
     std::vector<std::unique_ptr<Block>> blocks_;
     size_t used_ = kBlockSize;
   public:
-    auto alloc() -> PairData * {
-        if (blocks_.empty() || used_ + sizeof(PairData) > kBlockSize) {
+    template <typename... Args>
+    auto alloc(Args&&... args) -> T * {
+        if (blocks_.empty() || used_ + sizeof(T) > kBlockSize) {
             blocks_.push_back(std::make_unique<Block>());
             used_ = 0;
         }
-        if (used_ > 0)
-            used_ = (used_ + alignof(PairData) - 1) & ~(alignof(PairData) - 1);
-        auto *p = reinterpret_cast<PairData *>(blocks_.back()->data + used_);
-        used_ += sizeof(PairData);
-        return new (p) PairData();
+        if constexpr (alignof(T) > 1) {
+            if (used_ > 0)
+                used_ = (used_ + alignof(T) - 1) & ~(alignof(T) - 1);
+        }
+        auto *p = reinterpret_cast<T *>(blocks_.back()->data + used_);
+        used_ += sizeof(T);
+        return new (p) T(std::forward<Args>(args)...);
     }
     void purge() { blocks_.clear(); used_ = kBlockSize; }
 };
@@ -58,7 +62,7 @@ class PairPool {
 class VDLISP_API State {
   public:
     Env *global = nullptr;
-    std::unordered_map<std::string_view, Value> symbol_intern;
+    boost::unordered_flat_map<std::string_view, Value> symbol_intern;
 
     State();
     ~State();
@@ -106,10 +110,10 @@ class VDLISP_API State {
 
     // ---------- 公开字段 ----------
     Value current_expr;
-    std::unordered_map<uint64_t, SourceLoc> src_map;
-    std::unordered_map<uint64_t, LispError::Chain> src_call_chain_map;
-    std::unordered_map<std::string, std::string, StringHash, StringEqual> sources;
-    std::unordered_map<std::string, Value> loaded_modules;
+    boost::unordered_flat_map<uint64_t, SourceLoc> src_map;
+    boost::unordered_flat_map<uint64_t, LispError::Chain> src_call_chain_map;
+    boost::unordered_flat_map<std::string, std::string, StringHash, StringEqual> sources;
+    boost::unordered_flat_map<std::string, Value> loaded_modules;
 
     [[nodiscard]] auto get_source_line(std::string_view file, size_t line, std::string &out) const -> bool;
 
@@ -131,7 +135,10 @@ class VDLISP_API State {
     [[nodiscard]] auto alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData *;
     [[nodiscard]] auto alloc_env() -> Env *;
 
-    PairPool pair_pool;
+    SlabPool<PairData> pair_pool;
+    SlabPool<StringData> string_pool;
+    SlabPool<FuncData> func_pool;
+    SlabPool<MacroData> macro_pool;
 };
 
 // 尾插构造链表的工具（需放在 State 定义之后，因为调用了 State::make_pair）

@@ -1,6 +1,6 @@
 #include "state.hpp"
+#include <boost/container/small_vector.hpp>
 #include <optional>
-#include <vector>
 
 using namespace vdlisp;
 
@@ -28,7 +28,7 @@ State::~State() {
 // -------------------- State allocators --------------------
 
 auto State::alloc_string(const std::string &s) -> StringData * {
-    return new StringData(s);
+    return string_pool.alloc(s);
 }
 
 auto State::alloc_pair(Value &&car, Value &&cdr) -> PairData * {
@@ -40,7 +40,7 @@ auto State::alloc_pair(Value &&car, Value &&cdr) -> PairData * {
 }
 
 auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData * {
-    auto *f = new FuncData();
+    auto *f = func_pool.alloc();
     f->params = std::move(params);
     f->body = std::move(body);
     f->closure_env = env;
@@ -49,7 +49,7 @@ auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData * {
 }
 
 auto State::alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData * {
-    auto *m = new MacroData();
+    auto *m = macro_pool.alloc();
     m->params = std::move(params);
     m->body = std::move(body);
     m->closure_env = env;
@@ -61,16 +61,13 @@ auto State::alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData * {
 
 auto State::alloc_env() -> Env * {
     auto *e = new Env();
-    e->parent = nullptr;
     e->map.reserve(32);
     return e;
 }
 
 auto State::make_env(Env *parent) -> Env * {
     Env *e = alloc_env();
-    e->parent = parent;
-    if (parent)
-        retain_env(parent);
+    if (parent) e->parent.reset(parent);  // intrusive_ptr::reset 自动 add_ref
     return e;
 }
 
@@ -85,23 +82,28 @@ auto State::shutdown_and_purge_pools() -> void {
     }
     symbol_intern.clear();
 
-    // 迭代清空环境链（不会 delete 任何 Env，仅打断引用环）
-    std::vector<Env *> stack;
-    if (global) stack.push_back(global);
+    // 迭代清空环境链。
+    // 用 intrusive_ptr 持有遍历路径上的 Env，防止清空 map 时
+    // 析构 cascade 提前销毁上游环境。
+    boost::container::small_vector<boost::intrusive_ptr<Env>, 32> stack;
+    if (global) stack.emplace_back(global, false);  // 不额外 add_ref，由 global 持有
     while (!stack.empty()) {
-        Env *e = stack.back();
+        auto e = std::move(stack.back());
         stack.pop_back();
         if (e->parent)
-            stack.push_back(e->parent);
+            stack.push_back(e->parent);  // 拷贝 intrusive_ptr，add_ref
         for (auto &mkv : e->map) {
             clear_closure_env(mkv.second);
             mkv.second = Value();
         }
         e->map.clear();
-        e->parent = nullptr;
+        e->parent.reset();  // 释放对父环境的引用
     }
 
     pair_pool.purge();
+    string_pool.purge();
+    func_pool.purge();
+    macro_pool.purge();
 
     if (global) {
         release_env(global);
@@ -226,7 +228,7 @@ auto State::lookup(const std::string &name, Env *env) -> Value * {
         auto it = e->map.find(name);
         if (it != e->map.end())
             return &it->second;
-        e = e->parent;
+        e = e->parent.get();
     }
     return nullptr;
 }
@@ -268,7 +270,7 @@ static auto with_call_chain(State &S, bool have_call_loc, const SourceLoc &call_
 }
 
 static void bind_params_to_env(
-    std::unordered_map<std::string, Value> &out,
+    boost::unordered_flat_map<std::string, Value> &out,
     const Value &params,
     const Value &args,
     bool fill_missing_with_nil);
@@ -301,7 +303,7 @@ static auto invoke_closure_body(
 }
 
 static void bind_params_to_env(
-    std::unordered_map<std::string, Value> &out,
+    boost::unordered_flat_map<std::string, Value> &out,
     const Value &params,
     const Value &args,
     bool fill_missing_with_nil) {
@@ -444,8 +446,7 @@ static auto invoke_func(State &S, FuncData *fd, const Value &args) -> Value {
 }
 } // namespace
 
-auto State::call(const Value &fn, const Value &args, Env *env) -> Value {
-    (void)env;
+auto State::call(const Value &fn, const Value &args, [[maybe_unused]] Env *env) -> Value {
     if (!fn) [[unlikely]]
         throw LispError("attempt to call nil");
     if (fn.get_type() == TCFUNC) {

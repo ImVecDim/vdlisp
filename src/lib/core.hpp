@@ -131,28 +131,32 @@ inline auto register_core(State &S) -> void {
     });
     S.register_prim("quasiquote", [](State &S, const Value &args, Env *env) -> Value {
         // 递归展开 quasiquote；只有最内层的 unquote 会真正触发求值。
-        std::function<Value(const Value &, int)> qq_expand = [&](const Value &expr, int depth) -> Value {
-            if (!expr)
-                return {};
-            if (is_pair(expr)) {
-                Value car = pair_car(expr);
-                Value cdr = pair_cdr(expr);
-                if (is_symbol(car, "unquote")) {
-                    if (depth == 1) {
-                        Value uq_args = cdr;
-                        return uq_args ? S.eval(pair_car(uq_args), env) : Value();
-                    } else {
-                        return S.make_pair(std::move(car), qq_expand(cdr, depth - 1));
+        // 用局部函子代替 std::function，避免类型擦除开销。
+        struct QQ {
+            State &S;
+            Env *env;
+            auto expand(const Value &expr, int depth) -> Value {
+                if (!expr)
+                    return {};
+                if (is_pair(expr)) {
+                    Value car = pair_car(expr);
+                    Value cdr = pair_cdr(expr);
+                    if (is_symbol(car, "unquote")) {
+                        if (depth == 1) {
+                            Value uq_args = cdr;
+                            return uq_args ? S.eval(pair_car(uq_args), env) : Value();
+                        }
+                        return S.make_pair(std::move(car), expand(cdr, depth - 1));
                     }
+                    if (is_symbol(car, "quasiquote")) {
+                        return S.make_pair(std::move(car), expand(cdr, depth + 1));
+                    }
+                    return S.make_pair(expand(car, depth), expand(cdr, depth));
                 }
-                if (is_symbol(car, "quasiquote")) {
-                    return S.make_pair(std::move(car), qq_expand(cdr, depth + 1));
-                }
-                return S.make_pair(qq_expand(car, depth), qq_expand(cdr, depth));
+                return expr;
             }
-            return expr;
         };
-        return qq_expand(pair_car(args), 1);
+        return QQ{S, env}.expand(pair_car(args), 1);
     });
     // `if` 不作为 primitive 存在，而是由语言层宏基于 `cond` 提供。
     S.register_prim("set", [](State &S, const Value &args, Env *env) -> Value {

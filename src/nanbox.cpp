@@ -7,16 +7,13 @@ using namespace vdlisp;
 
 namespace {
 
-// release_payload 的销毁函数表，用查表代替 switch 分发
+// release_payload 的销毁函数表，用查表代替 switch 分发。
+// 环境释放已移入 FuncData / MacroData 析构，此处统一 delete。
 using Destructor = void (*)(void *p) noexcept;
-static void destroy_pair(void *p) noexcept { delete static_cast<PairData *>(p); }
+static void destroy_pair(void *p) noexcept   { delete static_cast<PairData *>(p); }
 static void destroy_string(void *p) noexcept { delete static_cast<StringData *>(p); }
-static void destroy_func(void *p) noexcept {
-    auto *fd = static_cast<FuncData *>(p);
-    if (fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
-    delete fd;
-}
-static void destroy_macro(void *p) noexcept { delete static_cast<MacroData *>(p); }
+static void destroy_func(void *p) noexcept   { delete static_cast<FuncData *>(p); }
+static void destroy_macro(void *p) noexcept  { delete static_cast<MacroData *>(p); }
 constexpr std::array<Destructor, 9> kDestructors = {
     nullptr,          // TNIL
     destroy_pair,     // TPAIR
@@ -30,14 +27,6 @@ constexpr std::array<Destructor, 9> kDestructors = {
 };
 
 } // namespace
-
-Env::~Env() noexcept {
-    // 父环境由子环境持有一份引用，这里负责对称释放。
-    if (parent) {
-        release_env(parent);
-        parent = nullptr;
-    }
-}
 
 // -------------------- Value implementation --------------------
 
