@@ -54,7 +54,7 @@ class SlabPool {
         used_ += sizeof(T);
         return new (p) T(std::forward<Args>(args)...);
     }
-    void purge() { blocks_.clear(); used_ = kBlockSize; }
+    void purge() { blocks_.clear(); blocks_.shrink_to_fit(); used_ = kBlockSize; }
 };
 
 // ---- State：完整的解释器全局状态 ----

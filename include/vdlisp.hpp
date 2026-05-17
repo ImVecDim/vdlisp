@@ -24,15 +24,13 @@
 
 // ---- DLL 导出/导入宏 ----
 // 构建动态库时导出符号；静态链接时宏为空（MinGW 无需 dllimport 即可正确解析）。
-#ifdef VDLISP_BUILD_SHARED
+
   #ifdef _WIN32
     #define VDLISP_API __declspec(dllexport)
   #else
     #define VDLISP_API __attribute__((visibility("default")))
   #endif
-#else
-  #define VDLISP_API
-#endif
+
 
 namespace vdlisp {
 
@@ -399,7 +397,7 @@ struct VDLISP_API LispError : public std::runtime_error {
 VDLISP_API auto print_error_with_loc(const State &S, const SourceLoc &loc, const std::string &msg) -> void;
 
 // 结构相等比较
-VDLISP_API [[nodiscard]] auto value_equal(const Value &a, const Value &b) -> bool;
+[[nodiscard]] auto value_equal(const Value &a, const Value &b) -> bool;
 
 // 数值参数检查
 [[nodiscard]] [[gnu::always_inline]] inline auto require_number(const Value &v, const char *who) -> double {

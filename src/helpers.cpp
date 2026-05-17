@@ -1,4 +1,4 @@
-#include "helpers.hpp"
+#include "state.hpp"
 #include <charconv>
 #include <cstdlib>
 #include <iostream>
@@ -31,8 +31,25 @@ static void advance(std::string_view &cur, size_t &line, size_t &col) noexcept {
 static void skip_ws_and_comments(std::string_view &cur, size_t &line, size_t &col) noexcept {
     while (!cur.empty()) {
         char c = cur.front();
-        if (std::isspace((unsigned char)c)) {
-            advance(cur, line, col);
+        // 批跳过水平空白字符 (space, tab, cr, vt, ff)，避免逐字节 remove_prefix
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\v' || c == '\f') {
+            size_t n = 1;
+            const char *p = cur.data();
+            const char *end_ptr = p + cur.size();
+            while (p + n < end_ptr) {
+                char ch = p[n];
+                if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\v' || ch == '\f')
+                    ++n;
+                else
+                    break;
+            }
+            col += n;
+            cur.remove_prefix(n);
+            continue;
+        }
+        if (c == '\n') {
+            cur.remove_prefix(1);
+            ++line; col = 1;
             continue;
         }
         if (c == ';') {
@@ -149,13 +166,18 @@ static auto parse_at(State &S, std::string_view &cur, size_t &line, size_t &col,
         return v;
     } else {
         const char *tok_start = cur.data();
-        const char *tok_end = tok_start;
         size_t tline = line;
         size_t tcol = col;
-        while (!cur.empty() && !is_delim(cur.front())) {
-            advance(cur, line, col);
-            tok_end = cur.data();
+        // 批量扫描 token：一次遍历完成行/列追踪，避免逐字节 remove_prefix
+        const char *scan = tok_start;
+        const char *end_ptr = tok_start + cur.size();
+        while (scan < end_ptr && !is_delim(*scan)) {
+            if (*scan == '\n') { ++line; col = 1; }
+            else { ++col; }
+            ++scan;
         }
+        cur = std::string_view(scan, end_ptr - scan);
+        const char *tok_end = scan;
         double val;
         auto [ptr, ec] = std::from_chars(tok_start, tok_end, val);
         if (ec == std::errc{} && ptr == tok_end) {
