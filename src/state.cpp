@@ -1,6 +1,4 @@
-#include "vdlisp.hpp"
-#include <cmath>
-#include <limits>
+#include "state.hpp"
 #include <optional>
 #include <vector>
 
@@ -9,9 +7,8 @@ using namespace vdlisp;
 // -------------------- helpers --------------------
 
 #include "lib/lib.hpp"
-#include "helpers.hpp"
-#include "jit/jit.hpp"
-#include "jit/jit_ir_builder.hpp"
+
+
 
 State::State() {
     // 启动时预留常用哈希表容量，减少 REPL 与加载阶段的反复 rehash。
@@ -22,6 +19,10 @@ State::State() {
     // 语言里把 `#t` 当作 truthy 的全局符号。
     bind_global("#t", make_symbol("#t"));
     // 不额外引入 `else` 关键字，`cond` 默认分支直接写 `#t` 即可。
+}
+
+State::~State() {
+    shutdown_and_purge_pools();
 }
 
 // -------------------- State allocators --------------------
@@ -44,7 +45,6 @@ auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData * {
     f->body = std::move(body);
     f->closure_env = env;
     if (env) retain_env(env);
-    f->num_call_count = 0;
     return f;
 }
 
@@ -75,11 +75,15 @@ auto State::make_env(Env *parent) -> Env * {
 }
 
 auto State::shutdown_and_purge_pools() -> void {
+    if (!global) return; // 已清理，防止重复调用
+
     // 退出前主动打断闭包与环境形成的环。
+    // 注意：symbol_intern 的 key 是 string_view 指向 StringData::value，
+    // 必须先打断闭包环，再通过 clear() 一次性销毁所有条目，避免 key dangling。
     for (auto &kv : symbol_intern) {
         clear_closure_env(kv.second);
-        kv.second = Value();
     }
+    symbol_intern.clear();
 
     // 迭代清空环境链（不会 delete 任何 Env，仅打断引用环）
     std::vector<Env *> stack;
@@ -112,12 +116,12 @@ auto State::shutdown_and_purge_pools() -> void {
     src_call_chain_map.clear();
     src_map.clear();
 
-    symbol_intern.clear();
     current_expr = Value();
 }
 
-// JIT 代码需要回退到解释器时，会通过这个全局指针找到当前 State。
-vdlisp::State *vdlisp::jit_active_state = nullptr;
+
+
+
 
 auto State::make_nil() noexcept -> Value {
     return {};
@@ -138,9 +142,10 @@ auto State::make_symbol(std::string_view s) -> Value {
     if (it != symbol_intern.end()) [[likely]]
         return it->second;
     Value v{TSYMBOL};
-    std::string key(s);
-    v.set_symbol(alloc_string(key));
-    symbol_intern[std::move(key)] = v;
+    auto *sd = alloc_string(std::string(s));
+    v.set_symbol(sd);
+    // key 是 string_view 指向 StringData::value，Value 持有 StringData 引用计数
+    symbol_intern.emplace(sd->value, v);
     return v;
 }
 auto State::make_pair(Value car, Value cdr) -> Value {
@@ -241,7 +246,7 @@ static auto eval_args(State &S, const Value &list, Env *env) -> Value {
 
 // 包装一次调用，把调用点位置信息一致地附着到异常上。
 template <typename Fn>
-static auto with_call_chain(State &S, bool have_call_loc, const State::SourceLoc &call_loc, std::vector<State::SourceLoc> call_chain_entry, Fn &&fn) -> Value {
+static auto with_call_chain(State &S, bool have_call_loc, const SourceLoc &call_loc, LispError::Chain call_chain_entry, Fn &&fn) -> Value {
     try {
         return fn();
     } catch (const LispError &le) {
@@ -268,12 +273,12 @@ static void bind_params_to_env(
     const Value &args,
     bool fill_missing_with_nil);
 
-static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::optional<std::vector<State::SourceLoc>> {
-    State::SourceLoc loc;
+static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::optional<LispError::Chain> {
+    SourceLoc loc;
     if (!S.get_source_loc(S.current_expr, loc) && !S.get_source_loc(expr, loc))
         return std::nullopt;
     loc.label = label;
-    return std::vector{std::move(loc)};
+    return LispError::Chain{std::move(loc)};
 }
 
 static auto invoke_closure_body(
@@ -284,8 +289,8 @@ static auto invoke_closure_body(
     const Value &body,
     bool fill_missing_with_nil,
     bool have_call_loc,
-    const State::SourceLoc &call_loc,
-    const std::vector<State::SourceLoc> &call_chain_entry) -> Value {
+    const SourceLoc &call_loc,
+    const LispError::Chain &call_chain_entry) -> Value {
     // 调用函数/宏时总是创建一个新环境，把实参绑定写进去后执行函数体。
     Env *e = S.make_env(closure_env ? closure_env : S.global);
     EnvGuard eg(e);
@@ -353,7 +358,7 @@ auto State::eval(const Value &expr, Env *env) -> Value {
             ok = true;
             return *vp;
         }
-        State::SourceLoc sl;
+        SourceLoc sl;
         if (get_source_loc(expr, sl))
             throw LispError(sl, std::string("unbound symbol: ") + *expr.get_symbol());
         throw LispError("unbound symbol: " + *expr.get_symbol());
@@ -379,8 +384,8 @@ auto State::eval(const Value &expr, Env *env) -> Value {
             const Value &body = md->body;
             Env *closure_env = md->closure_env;
             // 记录宏调用点与宏定义点，方便把展开错误串成一条调用链。
-            State::SourceLoc call_loc;
-            std::vector<State::SourceLoc> call_chain_entry;
+            SourceLoc call_loc;
+            LispError::Chain call_chain_entry;
             auto chain = build_call_chain_entry(*this, expr, "macro");
             bool have_call_loc = chain.has_value();
             if (have_call_loc) {
@@ -389,12 +394,12 @@ auto State::eval(const Value &expr, Env *env) -> Value {
                     call_loc.label = std::string("macro ") + *car.get_symbol();
                 call_chain_entry = std::move(*chain);
                 call_chain_entry.front() = call_loc;
-                State::SourceLoc def_loc;
+                SourceLoc def_loc;
                 if (md && md->body && get_source_loc(md->body, def_loc)) {
                     def_loc.label = std::string("macro-def");
                     call_chain_entry.push_back(def_loc);
                 }
-                src_call_chain_map[expr.identity_key()] = call_chain_entry;
+                src_call_chain_map[expr.identity_key()] = LispError::Chain(call_chain_entry);
             }
 
             Value res = invoke_closure_body(*this, closure_env, params, cdr, body, /*fill_missing_with_nil=*/true, have_call_loc, call_loc, call_chain_entry);
@@ -428,31 +433,12 @@ auto State::eval(const Value &expr, Env *env) -> Value {
 }
 
 namespace {
-// 从 args 列表中提取实参的 double 值，失败返回 false。
-static auto extract_numeric_args(const Value &args, std::vector<double> &out) -> bool {
-    for (auto a = &args; *a; a = &a->get_pair()->cdr) {
-        const Value &av = a->get_pair()->car;
-        if (!av || av.get_type() != TNUMBER) return false;
-        out.push_back(av.get_number());
-    }
-    return true;
-}
-
-// 尝试对 FuncData 做 JIT 编译
-static auto attempt_jit_compile(FuncData *fd) -> void {
-    if (!fd || fd->jit_failed || fd->compiled_code || fd->num_call_count <= 3) return;
-    try {
-        void *c = global_jit.compileFuncData(fd);
-        fd->compiled_code = c;
-        if (!c) fd->jit_failed = true;
-    } catch (...) { fd->jit_failed = true; }
-}
 
 // 统一的闭包调用入口（含调用链追踪）
 static auto invoke_func(State &S, FuncData *fd, const Value &args) -> Value {
     auto chain = build_call_chain_entry(S, S.current_expr, "fn");
     bool have_call_loc = chain.has_value();
-    State::SourceLoc call_loc = have_call_loc ? chain->front() : State::SourceLoc{};
+    SourceLoc call_loc = have_call_loc ? chain->front() : SourceLoc{};
     return invoke_closure_body(S, fd->closure_env, fd->params, args, fd->body, false,
                                 have_call_loc, call_loc, std::move(*chain));
 }
@@ -466,34 +452,6 @@ auto State::call(const Value &fn, const Value &args, Env *env) -> Value {
         return fn.get_cfunc()(*this, args);
     } else if (fn.get_type() == TFUNC) {
         FuncData *fd = fn.get_func();
-        std::vector<double> darr;
-        bool numeric = extract_numeric_args(args, darr);
-
-        if (numeric) {
-            fd->num_call_count++;
-            attempt_jit_compile(fd);
-        }
-
-        if (fd->compiled_code && numeric) {
-            using JitFn = double (*)(double *, int);
-            jit_active_state = this;
-            double res = 0.0;
-            bool jit_threw = false;
-            try {
-                res = reinterpret_cast<JitFn>(fd->compiled_code)(
-                    darr.empty() ? nullptr : darr.data(), (int)darr.size());
-            } catch (...) {
-                jit_threw = true;
-                res = std::numeric_limits<double>::quiet_NaN();
-            }
-            jit_active_state = nullptr;
-            if (std::isnan(res)) {
-                if (jit_threw) { fd->compiled_code = nullptr; fd->jit_failed = true; }
-                return invoke_func(*this, fd, args);
-            }
-            return make_number(res);
-        }
-
         return invoke_func(*this, fd, args);
     }
     throw LispError("not a function");
@@ -509,7 +467,7 @@ auto State::do_list(const Value &body, Env *env) -> Value {
 auto State::to_string(const Value &v) -> std::string {
     if (!v)
         return "nil";
-    return v.to_repr(*this);
+    std::string out;
+    v.to_repr(*this, out);
+    return out;
 }
-
-

@@ -4,11 +4,10 @@
 
 ## 1. 系统概述 (System Overview)
 
-vdlisp 是一个微型 Lisp 解释器。它的核心由 C++20 开发，并在频繁调用的纯数值（pure numeric）计算函数路径上集成了一个基于 LLVM MCJIT 的即时编译器（JIT）。
+vdlisp 是一个微型 Lisp 解释器。它的核心由 C++20 开发。
 
 **核心能力包括：**
 - **词法与解释器**：支持标准 S 表达式解析，提供严格的词法作用域（Lexical Scope）以及用户函数（闭包）和宏（Macro）。
-- **即时编译（JIT）加速**：针对纯浮点型（`double`）计算的热点代码无缝启动 LLVM IR 生成与 JIT 编译执行。
 - **错误定位引擎**：能够精确跟踪到文件、行、列，支持追踪由于宏展开与深层次函数调用引发的级联调用链。
 - **脚本与交互式能力**：支持 Readline 历史记录的 REPL 和 `require` 模块执行能力。
 
@@ -39,7 +38,7 @@ vdlisp 是一个微型 Lisp 解释器。它的核心由 C++20 开发，并在频
 
 ### 3.3 循环引用打破机制
 单纯的引用计数会有循环引用泄露的固有缺陷（例如闭包捕获自己所在的环境链）。为使内存检测工具（基于 ASan / Valgrind 等）能正确通过并帮助长寿命脚本安全执行：
-- 解释器退出环节（`State::shutdown_and_purge_pools`）提供了一种基于“尽力而为（Best-effort）”的主动打破循环引用手段，主要用于擦除缓存、符号表并显式切断执行期的环路。
+- 解释器退出环节（`State::shutdown_and_purge_pools`）提供了一种基于"尽力而为（Best-effort）"的主动打破循环引用手段，主要用于擦除缓存、符号表并显式切断执行期的环路。
 
 ## 4. 执行模型 (Execution Model)
 
@@ -56,33 +55,14 @@ vdlisp 是一个微型 Lisp 解释器。它的核心由 C++20 开发，并在频
 作用域由 `Env` 类（继承 `RcBase`）管理，内聚包含指向父辈的映射（`Env* parent`）以及局部 `std::unordered_map<std::string, Value> map` 名称值绑定表。系统按链式回溯寻找最近作用的变量。
 
 ### 4.4 宏 (Macro) 的特殊期 
-宏是在“解释展开期”动态调用的闭包函数，通过把传入的原始 AST 对象视为数据并动态演算后，返回经过改写的 AST ，然后立即触发该展开结点的再求值。宏相关的错误会尽量将调用 Call Chain （基于 `src_call_chain_map` 机制）全部打印处理。
+宏是在"解释展开期"动态调用的闭包函数，通过把传入的原始 AST 对象视为数据并动态演算后，返回经过改写的 AST ，然后立即触发该展开结点的再求值。宏相关的错误会尽量将调用 Call Chain （基于 `src_call_chain_map` 机制）全部打印处理。
 
-## 5. JIT 编译 (JIT Compilation)
+## 5. 文件与模块系统 (`require`)
 
-为了解决脚本解释带来的性能损耗，在用户 Lisp 侧数值循环计算环节做了激进 JIT 优化。基于 LLVM MCJIT。
-
-### 5.1 触发机制
-针对 `FuncData` 对象内部包含 `num_call_count`，当：
-1. 本函数执行频繁且被热度检测触发。
-2. 传入的参数**全部**为 `TNUMBER`。
-系统则主动尝试将其解释期 AST 即时拉取并编译为 LLVM 的机器码模块 (`void* compiled_code`)。
-
-### 5.2 返回约束 & 降级保护 (Interpreter Fallback)
-JIT 生成函数要求具有标准的 C 语言 ABI 签名约束机制（接收 `double*`, 返回 `double`）。在执行内若是遇见：
-- 环境跨越（Closure Env 捕获数值）。利用 C 注入函数边界 `VDLISP__jit_lookup_number` 在外侧运行期链式检测 `Env` 值是否非数值约束/未绑定（导致返回 `NaN`）。
-- 一旦发生 NaN / JIT 编译不支持的形式 / 内部错误，JIT Wrapper （`VDLISP__call_from_jit`）能够侦测到，进而立刻回退（Fallback）至普通解释器求值 `VDLISP__call_interpreted_from_jit`。并为该闭包永久置起 `jit_failed = true` ，防止退化导致的后续无尽重新尝试开销。
-
-*(注：系统执行期间通过 `jit_active_state` 去记录跨运行时的 Global State 上下文，供异常态的 JIT 去查找全局 Fallback 函数栈)*
-
-## 6. 文件与模块系统 (`require`)
-
-解释器支持构建并服用模块的能力。
-
-### 6.1 `require` 语法
+### 5.1 `require` 语法
 通过内置的 `require` （如 `(require "path/to/mod.lisp")`）执行其他文件代码并带回结果。
 执行具有环境隔离感知并采用 **路径规范化 (Canonical Path)** 为键（Key），存入 `loaded_modules`。
 
-### 6.2 模块缓存机制
+### 5.2 模块缓存机制
 1. 如果已加载过某绝对路径的对应模块，直接由缓存返回其终态 Value ，避免重复求值以及死循环包含。
-2. 对于相对路径加载，其会优先根据“执行发起点”（即上一个调用方所在目录）拼凑相对查找；若该文件不存在时，再退回到基于当前系统启动目录的工作路径。
+2. 对于相对路径加载，其会优先根据"执行发起点"（即上一个调用方所在目录）拼凑相对查找；若该文件不存在时，再退回到基于当前系统启动目录的工作路径。

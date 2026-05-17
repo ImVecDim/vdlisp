@@ -1,103 +1,96 @@
 cmake_minimum_required(VERSION 3.15)
 project(vdlisp LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(ENABLE_LTO "Enable LTO and agressive optimizations (disable for faster dev builds)" ON)
+option(ENABLE_LTO "Enable LTO and agressive optimizations" ON)
 
-# Choose compilation flags based on build type and LTO option.
-# - Debug: no optimizations, include debug info and frame pointers for easier debugging/profiling
-# - Release: enable optimizations; if ENABLE_LTO is set, apply aggressive LTO flags
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_compile_options(-O0 -g -fno-omit-frame-pointer -fdiagnostics-color=always)
-else()
-  if(ENABLE_LTO)
-    add_compile_options(-O3 -march=native -flto -fdiagnostics-color=always)
-  else()
-    add_compile_options(-O3 -fdiagnostics-color=always)
-  endif()
-endif()
-
-add_compile_definitions(_GNU_SOURCE EXPERIMENTAL_KEY_INSTRUCTIONS __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS __STDC_LIMIT_MACROS)
-add_compile_options(-Wno-unused-parameter -Wno-deprecated-declarations)
-
-include_directories(${CMAKE_SOURCE_DIR}/src)
-
-# Prefer using llvm-config when available for portable flags
-find_program(LLVM_CONFIG NAMES llvm-config llvm-config-21)
-if(LLVM_CONFIG)
-  message(STATUS "Found llvm-config: ${LLVM_CONFIG}")
-  execute_process(COMMAND ${LLVM_CONFIG} --cxxflags OUTPUT_VARIABLE LLVM_CXXFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE)
-  execute_process(COMMAND ${LLVM_CONFIG} --ldflags OUTPUT_VARIABLE LLVM_LDFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE)
-  execute_process(COMMAND ${LLVM_CONFIG} --libs OUTPUT_VARIABLE LLVM_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE)
-  execute_process(COMMAND ${LLVM_CONFIG} --includedir OUTPUT_VARIABLE LLVM_INCLUDEDIR OUTPUT_STRIP_TRAILING_WHITESPACE)
-  string(REPLACE " " ";" LLVM_CXXFLAGS_LIST "${LLVM_CXXFLAGS}")
-  string(REPLACE " " ";" LLVM_LDFLAGS_LIST "${LLVM_LDFLAGS}")
-  string(REPLACE " " ";" LLVM_LIBS_LIST "${LLVM_LIBS}")
-  # apply compile flags from llvm-config
-  foreach(f IN LISTS LLVM_CXXFLAGS_LIST)
-    add_compile_options(${f})
-  endforeach()
-  foreach(lf IN LISTS LLVM_LDFLAGS_LIST)
-    add_link_options(${lf})
-  endforeach()
-  include_directories(${LLVM_INCLUDEDIR})
-  set(USE_LLVM ON)
-else()
-  message(WARNING "llvm-config not found; falling back to common locations")
-  find_path(LLVM_INCLUDE_DIR NAMES llvm/IR/IRBuilder.h PATHS /usr/include /usr/local/include /usr/lib64/llvm21/include)
-  find_library(LLVM_LIB NAMES LLVM-21 LLVM PATHS /usr/lib64 /usr/lib /usr/local/lib)
-  if(LLVM_INCLUDE_DIR AND LLVM_LIB)
-    message(STATUS "Found LLVM includes: ${LLVM_INCLUDE_DIR}")
-    include_directories(${LLVM_INCLUDE_DIR})
-    set(USE_LLVM ON)
-  else()
-    message(WARNING "LLVM not found in common locations; JIT will be disabled unless you set LLVM paths.")
-    set(USE_LLVM OFF)
-  endif()
-endif()
-
-file(GLOB VDL_SOURCES
-  ${CMAKE_SOURCE_DIR}/src/*.cpp
-  ${CMAKE_SOURCE_DIR}/src/jit/*.cpp
-  ${CMAKE_SOURCE_DIR}/src/lib/*.cpp
-)
-
-add_executable(vdlisp ${VDL_SOURCES})
-# Force C++20 even if external flags add a different -std=...
-target_compile_options(vdlisp PRIVATE -std=c++20 -fexceptions)
-
-# 运行二进制时会按相对路径查找 scripts/lang_basics.lisp，构建后把脚本复制到产物目录旁边。
-add_custom_command(TARGET vdlisp POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vdlisp>/scripts"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${CMAKE_SOURCE_DIR}/scripts/lang_basics.lisp"
-          "$<TARGET_FILE_DIR:vdlisp>/scripts/lang_basics.lisp"
-)
-
-if(USE_LLVM)
-  if(DEFINED LLVM_LIBS_LIST)
-    target_link_libraries(vdlisp PRIVATE ${LLVM_LIBS_LIST})
-  else()
-    target_link_libraries(vdlisp PRIVATE ${LLVM_LIB})
-  endif()
-  target_compile_definitions(vdlisp PRIVATE HAVE_LLVM=1)
-  message(STATUS "vdlisp will link against LLVM (JIT enabled)")
-else()
-  message(STATUS "Building without LLVM support; JIT disabled")
-endif()
-
-find_library(READLINE_LIB NAMES readline)
-if(READLINE_LIB)
-  target_link_libraries(vdlisp PRIVATE ${READLINE_LIB})
-else()
-  message(WARNING "readline not found; build may fail if code requires it")
-endif()
-
+# ---- 编译模式 ----
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+# ---- 全局编译选项 ----
+add_compile_options(-fdiagnostics-color=always)
+add_compile_options(-Wno-unused-parameter -Wno-deprecated-declarations)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  add_compile_options(-O0 -g -fno-omit-frame-pointer)
+else()
+  add_compile_options(-O3)
+  if(ENABLE_LTO)
+    add_compile_options(-flto -march=native)
+  endif()
+endif()
+
+# ---- 库源文件（显式列出，避免 file(GLOB) 的增量构建陷阱） ----
+set(VDLISP_LIB_SRC
+    src/helpers.cpp
+    src/nanbox.cpp
+    src/state.cpp
+)
+
+# ---- 公共编译参数 ----
+set(VDLISP_DEFINES
+    _GNU_SOURCE EXPERIMENTAL_KEY_INSTRUCTIONS
+    __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS __STDC_LIMIT_MACROS
+)
+set(VDLISP_INCLUDES
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+find_package(Boost 1.80 REQUIRED)
+list(APPEND VDLISP_INCLUDES ${Boost_INCLUDE_DIRS})
+message(STATUS "Boost ${Boost_VERSION} found")
+
+# ---- 静态库 ----
+add_library(vdlisp STATIC ${VDLISP_LIB_SRC})
+target_compile_definitions(vdlisp PRIVATE ${VDLISP_DEFINES})
+target_include_directories(vdlisp PUBLIC ${VDLISP_INCLUDES})
+
+# ---- 动态库（需独立编译，因 VDLISP_BUILD_SHARED 改变符号可见性） ----
+add_library(vdlisp_shared SHARED ${VDLISP_LIB_SRC})
+target_compile_definitions(vdlisp_shared PRIVATE
+    ${VDLISP_DEFINES} VDLISP_BUILD_SHARED)
+target_include_directories(vdlisp_shared PUBLIC ${VDLISP_INCLUDES})
+target_link_options(vdlisp_shared PRIVATE -Wl,--exclude-all-symbols)
+set_target_properties(vdlisp_shared PROPERTIES
+    BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}")
+
+# ---- 可执行文件 ----
+add_executable(vdlisp_exe src/main.cpp)
+target_link_libraries(vdlisp_exe PRIVATE vdlisp)
+target_compile_definitions(vdlisp_exe PRIVATE ${VDLISP_DEFINES})
+target_include_directories(vdlisp_exe PRIVATE ${VDLISP_INCLUDES})
+set_target_properties(vdlisp_exe PROPERTIES OUTPUT_NAME vdlisp)
+
+# 启动脚本部署
+add_custom_command(TARGET vdlisp_exe POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vdlisp_exe>/scripts"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_SOURCE_DIR}/scripts/lang_basics.lisp"
+          "$<TARGET_FILE_DIR:vdlisp_exe>/scripts/lang_basics.lisp"
+)
+
+# ---- 可选的 readline 支持 ----
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(READLINE IMPORTED_TARGET readline)
+  if(READLINE_FOUND)
+    target_link_libraries(vdlisp_exe PRIVATE PkgConfig::READLINE)
+  else()
+    message(WARNING "readline not found (pkg-config); REPL history disabled")
+  endif()
+else()
+  find_library(READLINE_LIB NAMES readline)
+  if(READLINE_LIB)
+    target_link_libraries(vdlisp_exe PRIVATE ${READLINE_LIB})
+  else()
+    message(WARNING "readline not found; REPL history disabled")
+  endif()
 endif()
 
 message(STATUS "Configured vdlisp (ENABLE_LTO=${ENABLE_LTO})")

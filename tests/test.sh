@@ -86,7 +86,7 @@ TESTS=(
   $'(set f (fn (a b . rest) (list a b rest)))\n(f 1 2 3 4)' '(1 2 (3 4))'
     $'(set m (macro (a . rest) (list + a (car rest))))\n(m 1 2 3)' '3'
 
-  # Conditionals, set, let, while
+  # Conditional, set, let, while
   $'(cond ((> 2 3) 1) ((< 2 3) 2))' '2'
   $'(cond ((> 1 2) 1) ((< 1 2) (+ 1 2)))' '3'
   $'(cond (#t 42))' '42'
@@ -101,23 +101,6 @@ TESTS=(
   '`(a ,(+ 1 2))' '(a 3)'
   '(set y 10) `(foo ,y bar)' '(foo 10 bar)'
   '`(1 ,(+ 2 3) 4)' '(1 5 4)'
-
-  # Nested JIT calls (numeric path)
-  $'(set h (fn (x) (+ x 1)))\n(set g (fn (x) (h (+ x 2))))\n(set f (fn (x) (g (+ x 3))))\n(f 10)' '16'
-
-  # Nested call where inner returns non-number -> triggers fallback
-  $'(set h (fn (x) (list x)))\n(set g (fn (x) (+ (car (h x)) 1)))\n(set f (fn (x) (g (+ x 3))))\n(f 5)' '9'
-
-  # JIT representation checks: function should be reported as a function initially,
-  # and as a jit_func / <jit_func> after real JIT compilation is triggered. We trigger
-  # compilation by calling the function multiple times so the runtime's heuristic
-  # or JIT driver can compile it.
-  $'(set f (fn (x) (+ x 1)))\n(type f)' 'function'
-  $'(set f (fn (x) (+ x 1)))\n(f 1)\n(f 2)\n(f 3)\n(f 4)\n(f 5)\n(type f)' 'jit_func'
-  $'(set f (fn (x) (+ x 1)))\n(f 1)\n(f 2)\n(f 3)\n(f 4)\n(f 5)\n(print f)' '<jit_func>'
-
-  # JIT with external numeric variable (free var lookup)
-  $'(set y 10)\n(set f (fn (x) (+ x y)))\n(f 1)\n(f 1)\n(f 1)\n(f 1)\n(f 1)\n(type f)' 'jit_func'
 
   # Error cases
   '(parse 1)' 'err:parse requires a string'
@@ -196,22 +179,5 @@ run_one() {
 for ((i=0;i<${#TESTS[@]};i+=2)); do
   run_one "${TESTS[i]}" "${TESTS[i+1]}"
 done
-
-# 额外跑一个脚本，覆盖控制流结构在 JIT 下的编译与打印路径。
-{
-  echo "Running JIT control forms script..."
-  out=$("$VDLISP__BIN" tests/jit_control_forms.lisp 2>&1 || true)
-  if ! echo "$out" | grep -Fq "COND_DONE"; then
-    echo "FAILED: jit control forms (cond)"; echo "$out"; exit 1; fi
-  if ! echo "$out" | grep -Fq "LET_DONE"; then
-    echo "FAILED: jit control forms (let)"; echo "$out"; exit 1; fi
-  if ! echo "$out" | grep -Fq "WHILE_DONE"; then
-    echo "FAILED: jit control forms (while)"; echo "$out"; exit 1; fi
-  if ! echo "$out" | grep -Fq "jit_func"; then
-    echo "FAILED: JIT not triggered"; echo "$out"; exit 1; fi
-  if ! echo "$out" | grep -Fq "<jit_func>"; then
-    echo "FAILED: JIT print form not found"; echo "$out"; exit 1; fi
-  echo "ok: jit control forms script"
-}
 
 echo "All tests passed."

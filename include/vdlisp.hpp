@@ -1,15 +1,41 @@
-#ifndef VDLISP__NANBOX_HPP
-#define VDLISP__NANBOX_HPP
+#ifndef VDLISP__VDLISP_HPP
+#define VDLISP__VDLISP_HPP
 
+// ============================================================================
+// vdlisp 公共 API 头文件
+// 供外部使用者 #include，暴露解释器的全部对外接口。
+// ============================================================================
+
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
+
+#include <boost/container/small_vector.hpp>
+
+
+// ---- DLL 导出/导入宏 ----
+// 构建动态库时导出符号；静态链接时宏为空（MinGW 无需 dllimport 即可正确解析）。
+#ifdef VDLISP_BUILD_SHARED
+  #ifdef _WIN32
+    #define VDLISP_API __declspec(dllexport)
+  #else
+    #define VDLISP_API __attribute__((visibility("default")))
+  #endif
+#else
+  #define VDLISP_API
+#endif
 
 namespace vdlisp {
+
+// ---- 前向声明 ----
 
 class Value;
 class PairData;
@@ -19,6 +45,8 @@ class MacroData;
 class State;
 class Env;
 
+// ---- 类型定义 ----
+
 using Prim = Value (*)(State &, const Value &, Env *);
 using CFunc = Value (*)(State &, const Value &);
 
@@ -27,11 +55,23 @@ enum Type : uint8_t {
     TFUNC, TMACRO, TPRIM, TCFUNC
 };
 
-// Forward declarations needed for the implementation
+// ---- 位操作辅助 ----
+
 namespace detail {
 inline constexpr auto double_to_bits(double value) noexcept -> uint64_t { return std::bit_cast<uint64_t>(value); }
 inline constexpr auto bits_to_double(uint64_t bits) noexcept -> double { return std::bit_cast<double>(bits); }
 } // namespace detail
+
+// ---- 源码位置（原 State::SourceLoc） ----
+
+struct SourceLoc {
+    std::string file;
+    size_t line = 0;
+    size_t col = 0;
+    std::string label;
+};
+
+// ---- 引用计数基础 ----
 
 struct RcBase {
     size_t refs_{1};
@@ -44,32 +84,35 @@ struct RcBase {
     inline __attribute__((always_inline)) size_t dec_ref() noexcept { return --refs_; }
 };
 
+// ---- StringData ----
+
 class StringData : public RcBase {
   public:
     explicit StringData(std::string_view s) : value(s) {}
     std::string value;
 };
 
-class Env : public RcBase {
+// ---- Env（作用域环境） ----
+
+class VDLISP_API Env : public RcBase {
   public:
-        // 一个环境就是“当前作用域绑定表 + 指向父作用域的链”。
     std::unordered_map<std::string, Value> map;
     Env *parent = nullptr;
     ~Env() noexcept;
 };
 
-// Env 单独提供 retain/release，避免和普通 Value 的引用计数细节混在一起。
+// ---- Env 引用计数辅助 ----
+
 inline __attribute__((always_inline)) void retain_env(Env *e) noexcept {
-    if (e)
-        e->inc_ref();
+    if (e) e->inc_ref();
 }
+
 inline __attribute__((always_inline)) void release_env(Env *e) noexcept {
-    if (e && e->dec_ref() == 0)
-        delete e;
+    if (e && e->dec_ref() == 0) delete e;
 }
 
 struct EnvGuard {
-    explicit EnvGuard(Env *e = nullptr) noexcept : e_{e} {}
+    explicit EnvGuard(Env *e = nullptr) noexcept : e_(e) {}
     ~EnvGuard() { if (e_) release_env(e_); }
     EnvGuard(const EnvGuard &) = delete;
     EnvGuard &operator=(const EnvGuard &) = delete;
@@ -81,27 +124,28 @@ struct EnvGuard {
         }
         return *this;
     }
-
   private:
     Env *e_;
 };
 
-class Value {
-  public:
-        // Value 用 NaN-boxing 把 number、指针对象和函数指针全塞进一个 64 位槽里。
-    static constexpr uint64_t kNaNMask = 0x7FF0000000000000ULL;
-    static constexpr uint64_t kTagMask = kNaNMask | 0x000F000000000000ULL; // NaN + tag bits
-    static constexpr uint64_t kPayloadMask = 0x0000FFFFFFFFFFFFULL;        // 48 bits for payload
+// ============================================================================
+// Value：NaN-boxing 值表示
+// ============================================================================
 
-    // 4 bit tag 决定 payload 里装的到底是哪一种运行时对象。
-    static constexpr uint64_t kTagNil = kNaNMask | 0x0000000000000000ULL;
-    static constexpr uint64_t kTagPair = kNaNMask | 0x0001000000000000ULL;
+class VDLISP_API Value {
+  public:
+    static constexpr uint64_t kNaNMask = 0x7FF0000000000000ULL;
+    static constexpr uint64_t kTagMask = kNaNMask | 0x000F000000000000ULL;
+    static constexpr uint64_t kPayloadMask = 0x0000FFFFFFFFFFFFULL;
+
+    static constexpr uint64_t kTagNil    = kNaNMask | 0x0000000000000000ULL;
+    static constexpr uint64_t kTagPair   = kNaNMask | 0x0001000000000000ULL;
     static constexpr uint64_t kTagString = kNaNMask | 0x0002000000000000ULL;
     static constexpr uint64_t kTagSymbol = kNaNMask | 0x0003000000000000ULL;
-    static constexpr uint64_t kTagFunc = kNaNMask | 0x0004000000000000ULL;
-    static constexpr uint64_t kTagMacro = kNaNMask | 0x0005000000000000ULL;
-    static constexpr uint64_t kTagPrim = kNaNMask | 0x0006000000000000ULL;
-    static constexpr uint64_t kTagCFunc = kNaNMask | 0x0007000000000000ULL;
+    static constexpr uint64_t kTagFunc   = kNaNMask | 0x0004000000000000ULL;
+    static constexpr uint64_t kTagMacro  = kNaNMask | 0x0005000000000000ULL;
+    static constexpr uint64_t kTagPrim   = kNaNMask | 0x0006000000000000ULL;
+    static constexpr uint64_t kTagCFunc  = kNaNMask | 0x0007000000000000ULL;
 
     Value() : bits(kTagNil) {}
     explicit Value(Type t);
@@ -114,19 +158,19 @@ class Value {
     auto operator=(Value &&other) noexcept -> Value &;
     auto operator=(std::nullptr_t) noexcept -> Value &;
 
-    // Getters
+    // ---- Getters ----
 
-    // get_type 是解释器最热的函数之一，先走 number 快路径。
     [[nodiscard]] inline auto get_type() const noexcept -> Type {
         if ((bits & kNaNMask) != kNaNMask) [[unlikely]]
             return TNUMBER;
-        static constexpr Type kTagMap[16] = {
+        static constexpr std::array kTagMap = {
             TNIL, TPAIR, TSTRING, TSYMBOL,
             TFUNC, TMACRO, TPRIM, TCFUNC,
             TNIL, TNIL, TNIL, TNIL,
             TNIL, TNIL, TNIL, TNIL};
         return kTagMap[(bits >> 48) & 0xF];
     }
+
     [[nodiscard]] auto get_number() const noexcept -> double;
     [[nodiscard]] auto get_pair() const noexcept -> PairData *;
     [[nodiscard]] auto get_string() const noexcept -> std::string *;
@@ -144,11 +188,11 @@ class Value {
     [[nodiscard]] auto identity_key() const noexcept -> uint64_t { return bits; }
     auto reset() noexcept -> void { *this = Value(); }
 
-    // 高层辅助接口主要用于错误信息和打印。
-    [[nodiscard]] auto type_name() const -> std::string;
-    auto to_repr(State &S) const -> std::string;
+    [[nodiscard]] auto type_name() const noexcept -> std::string_view;
+    auto to_repr(State &S, std::string &out) const -> void;
 
-    // set_* 负责改写 Value 的类型与 payload，并处理必要的释放。
+    // ---- Setters ----
+
     auto set_number(double value) noexcept -> void;
     auto set_pair(PairData *ptr) noexcept -> void;
     auto set_string(StringData *ptr) noexcept -> void;
@@ -166,7 +210,6 @@ class Value {
     static auto release_payload(Type t, void *p) noexcept -> void;
     static auto is_refcounted(Type t) noexcept -> bool;
 
-    // 这些模板帮助统一实现“tag + payload”的读写，不把位操作散到各处。
     template <uint64_t Tag, typename DataT>
     inline auto get_payload_raw() const noexcept -> DataT *;
 
@@ -179,11 +222,11 @@ class Value {
     template <uint64_t Tag, typename Fn>
     inline void set_fn_raw(Fn fn) noexcept;
 
-    // 所有 Lisp 值最终都编码到这里。
     uint64_t bits;
 };
 
-// 热路径上的短方法直接内联，避免解释器在 Value 访问上损失过多开销。
+// ---- Value 内联实现 ----
+
 inline auto Value::get_number() const noexcept -> double {
     double result;
     static_assert(sizeof(double) == sizeof(bits), "Double must be 64-bit");
@@ -194,15 +237,14 @@ inline auto Value::get_number() const noexcept -> double {
 inline auto Value::set_number(double value) noexcept -> void {
     release();
     std::memcpy(&bits, &value, sizeof(bits));
-    // NaN bit-pattern collides with NaN-boxing tags, so we can't represent NaN.
-    // Silently convert to 0.0 to maintain type-system invariants.
     if ((bits & kNaNMask) == kNaNMask)
         bits = 0;
 }
 
-// 模板定义放在头文件里，保证编译期可见并保持内联机会。
 template <uint64_t Tag, typename DataT>
-inline __attribute__((always_inline)) auto Value::get_payload_raw() const noexcept -> DataT * { return reinterpret_cast<DataT *>(bits & kPayloadMask); }
+inline __attribute__((always_inline)) auto Value::get_payload_raw() const noexcept -> DataT * {
+    return reinterpret_cast<DataT *>(bits & kPayloadMask);
+}
 
 template <uint64_t Tag, typename DataT>
 inline void Value::set_payload_raw(DataT *ptr) noexcept {
@@ -229,7 +271,9 @@ inline auto Value::set_fn_raw(Fn fn) noexcept -> void {
     bits = Tag | (payload & kPayloadMask);
 }
 
-inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData * { return get_payload_raw<kTagPair, PairData>(); }
+inline __attribute__((always_inline)) auto Value::get_pair() const noexcept -> PairData * {
+    return get_payload_raw<kTagPair, PairData>();
+}
 inline auto Value::set_pair(PairData *ptr) noexcept -> void { set_payload_raw<kTagPair, PairData>(ptr); }
 
 inline __attribute__((always_inline)) auto Value::get_string() const noexcept -> std::string * {
@@ -246,75 +290,67 @@ inline auto Value::set_symbol(StringData *ptr) noexcept -> void { set_payload_ra
 
 inline auto Value::get_func() const noexcept -> FuncData * { return get_payload_raw<kTagFunc, FuncData>(); }
 inline auto Value::set_func(FuncData *ptr) noexcept -> void { set_payload_raw<kTagFunc, FuncData>(ptr); }
-
 inline auto Value::get_macro() const noexcept -> MacroData * { return get_payload_raw<kTagMacro, MacroData>(); }
 inline auto Value::set_macro(MacroData *ptr) noexcept -> void { set_payload_raw<kTagMacro, MacroData>(ptr); }
-
 inline auto Value::get_prim() const noexcept -> Prim { return get_fn_raw<kTagPrim, Prim>(); }
 inline auto Value::set_prim(Prim fn) noexcept -> void { set_fn_raw<kTagPrim, Prim>(fn); }
-
 inline auto Value::get_cfunc() const noexcept -> CFunc { return get_fn_raw<kTagCFunc, CFunc>(); }
 inline auto Value::set_cfunc(CFunc fn) noexcept -> void { set_fn_raw<kTagCFunc, CFunc>(fn); }
 
 inline __attribute__((always_inline)) auto Value::retain() const noexcept -> void {
     Type t = get_type();
-    if (!is_refcounted(t))
-        return;
+    if (!is_refcounted(t)) return;
     retain_payload(t, payload_ptr());
 }
 
 inline __attribute__((always_inline)) auto Value::release() noexcept -> void {
     Type t = get_type();
-    if (!is_refcounted(t))
-        return;
+    if (!is_refcounted(t)) return;
     release_payload(t, payload_ptr());
     bits = kTagNil;
 }
 
 inline auto Value::is_refcounted(Type t) noexcept -> bool {
-    // 哪些类型需要引用计数是编译期常量，直接查表即可。
-    constexpr bool kIsRefcounted[] = {
-        /*TNIL*/ false,
-        /*TPAIR*/ true,
-        /*TNUMBER*/ false,
-        /*TSTRING*/ true,
-        /*TSYMBOL*/ true,
-        /*TFUNC*/ true,
-        /*TMACRO*/ true,
-        /*TPRIM*/ false,
-        /*TCFUNC*/ false};
-    size_t idx = static_cast<size_t>(t);
-    return idx < (sizeof(kIsRefcounted) / sizeof(kIsRefcounted[0])) ? kIsRefcounted[idx] : false;
+    static constexpr std::array kIsRefcounted = {
+        false,  // TNIL
+        true,   // TPAIR
+        false,  // TNUMBER
+        true,   // TSTRING
+        true,   // TSYMBOL
+        true,   // TFUNC
+        true,   // TMACRO
+        false,  // TPRIM
+        false,  // TCFUNC
+    };
+    return static_cast<size_t>(t) < std::size(kIsRefcounted) && kIsRefcounted[static_cast<size_t>(t)];
 }
 
 inline __attribute__((always_inline)) void Value::retain_payload(Type t, void *p) noexcept {
-    if (p)
-        static_cast<RcBase *>(p)->inc_ref();
+    if (p) static_cast<RcBase *>(p)->inc_ref();
 }
+
+// ---- PairData ----
+// operator delete 为空：PairData 由 PairPool / boost::object_pool 管理生命周期，
+// 引用计数归零时仅调用析构函数释放子对象，内存由 pool 统一回收。
 
 class PairData : public RcBase {
   public:
-        // PairData 是 Lisp 链表与 AST 的基础节点。
     Value car;
     Value cdr;
-
-    // 配对分配器使用 slab，operator delete 无需释放内存。
     static void operator delete(void *p) noexcept {}
 };
 
-// FuncData 保存闭包求值所需的全部运行时信息，也是 JIT 的编译单元。
+// ---- FuncData ----
+
 class FuncData : public RcBase {
   public:
     Value params;
     Value body;
     Env *closure_env = nullptr;
-    size_t num_call_count = 0;
-    void *compiled_code = nullptr;
-    bool jit_failed = false;
-    bool compiling = false; // 防止递归 JIT 编译形成环
 };
 
-// 宏只参与展开，不走 JIT，因此结构比函数更简单。
+// ---- MacroData ----
+
 class MacroData : public RcBase {
   public:
     Value params;
@@ -322,6 +358,110 @@ class MacroData : public RcBase {
     Env *closure_env = nullptr;
 };
 
+// ============================================================================
+// 异常类型：LispError
+// ============================================================================
+
+struct VDLISP_API LispError : public std::runtime_error {
+    SourceLoc loc;
+    using Chain = boost::container::small_vector<SourceLoc, 4>;
+    Chain call_chain;
+    bool has_loc = false;
+
+    explicit LispError(const std::string &msg)
+        : std::runtime_error(msg), has_loc(false) {}
+    LispError(SourceLoc loc, const std::string &msg)
+        : std::runtime_error(msg), loc(std::move(loc)), has_loc(true) {}
+    LispError(SourceLoc loc, const std::string &msg, Chain chain)
+        : std::runtime_error(msg), loc(std::move(loc)), call_chain(std::move(chain)), has_loc(true) {}
+};
+
+// ============================================================================
+// 辅助函数（内联，全部在公共 API 中暴露）
+// ============================================================================
+
+// 打印带源码定位的错误信息
+VDLISP_API auto print_error_with_loc(const State &S, const SourceLoc &loc, const std::string &msg) -> void;
+
+// 结构相等比较
+VDLISP_API [[nodiscard]] auto value_equal(const Value &a, const Value &b) -> bool;
+
+// 数值参数检查
+[[nodiscard]] inline __attribute__((always_inline)) auto require_number(const Value &v, const char *who) -> double {
+    if (!v || v.get_type() != TNUMBER) [[unlikely]]
+        throw LispError(std::string(who) + ": expected number, got " + std::string(v.type_name()));
+    return v.get_number();
+}
+
+// ---- pair 访问 ----
+
+template <auto Member>
+[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_access(const Value &p) noexcept {
+    if (!p || p.get_type() != TPAIR) {
+        static const Value kNil;
+        return kNil;
+    }
+    return (p.get_pair()->*Member);
+}
+[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_car(const Value &p) noexcept { return pair_access<&PairData::car>(p); }
+[[nodiscard]] inline __attribute__((always_inline)) const Value& pair_cdr(const Value &p) noexcept { return pair_access<&PairData::cdr>(p); }
+
+[[nodiscard]] inline __attribute__((always_inline)) auto is_pair(const Value &p) noexcept -> bool {
+    return p && p.get_type() == TPAIR;
+}
+[[nodiscard]] inline __attribute__((always_inline)) auto is_symbol(const Value &p, const std::string &name) -> bool {
+    return p && p.get_type() == TSYMBOL && *p.get_symbol() == name;
+}
+
+template <auto Member>
+inline __attribute__((always_inline)) void pair_set(const Value &p, const Value &v) noexcept {
+    if (!p || p.get_type() != TPAIR) return;
+    p.get_pair()->*Member = v;
+}
+inline __attribute__((always_inline)) void pair_set_car(const Value &p, const Value &v) noexcept { pair_set<&PairData::car>(p, v); }
+inline __attribute__((always_inline)) void pair_set_cdr(const Value &p, const Value &v) noexcept { pair_set<&PairData::cdr>(p, v); }
+
+// 遍历 Lisp 列表
+inline void foreach_lisp(const Value &list, auto&& F) {
+    const Value *cur = &list;
+    while (*cur && cur->get_type() == TPAIR) {
+        PairData *pd = cur->get_pair();
+        F(pd->car);
+        cur = &pd->cdr;
+    }
+}
+
+// 参数校验辅助
+[[nodiscard]] inline __attribute__((always_inline)) auto require_unary_args(const Value &args, const char *name) -> Value {
+    if (!args || pair_cdr(args))
+        throw LispError(std::string(name) + " requires exactly one argument");
+    return pair_car(args);
+}
+
+[[nodiscard]] inline __attribute__((always_inline)) auto require_binary_args(const Value &args, const char *name) -> std::pair<Value, Value> {
+    if (!args || !pair_cdr(args) || pair_cdr(pair_cdr(args)))
+        throw LispError(std::string(name) + " requires exactly two arguments");
+    return {pair_car(args), pair_car(pair_cdr(args))};
+}
+
+[[nodiscard]] inline __attribute__((always_inline)) auto require_pair_arg(const Value &args, const char *name) -> Value {
+    Value v = require_unary_args(args, name);
+    if (v && v.get_type() != TPAIR)
+        throw LispError(std::string(name) + " expects a pair");
+    return v;
+}
+
+// 断开闭包对环境的引用
+VDLISP_API void clear_closure_env(Value &v) noexcept;
+
+// ============================================================================
+// Unified public API typedef/alias  (State forward-declared above)
+// ============================================================================
+
+// 便捷地把一组 Value 拼成 Lisp 列表（定义在 state.hpp 中）
+template <typename... Vs>
+[[nodiscard]] auto list_of(State &S, Vs&&... vs) -> Value;
+
 } // namespace vdlisp
 
-#endif // VDLISP__NANBOX_HPP
+#endif // VDLISP__VDLISP_HPP

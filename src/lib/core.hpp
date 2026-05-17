@@ -1,7 +1,7 @@
 #ifndef VDLISP__CORE_HPP
 #define VDLISP__CORE_HPP
 
-#include "../helpers.hpp"
+#include "../state.hpp"
 
 #include <cstdlib>
 #include <functional>

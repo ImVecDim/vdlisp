@@ -1,8 +1,7 @@
 #ifndef VDLISP__MATH_HPP
 #define VDLISP__MATH_HPP
 
-#include "../helpers.hpp"
-#include "../nanbox.hpp"
+#include "../state.hpp"
 #include <cmath>
 
 namespace vdlisp {
@@ -15,7 +14,7 @@ inline Value builtin_unary_math(State &S, const Value &args, const char *name, O
 }
 
 inline auto register_math(State &S) -> void {
-    // 非捕获 lambda 逐行注册。每行一个，从原来的 45 行压缩到 15 行。
+    // 非捕获 lambda 逐行注册（CFunc 是裸函数指针，不能有捕获）
     S.register_builtin("exp",   [](State &S, const Value &a) { return builtin_unary_math(S, a, "exp",   [](double x) { return std::exp(x); }); });
     S.register_builtin("log",   [](State &S, const Value &a) { return builtin_unary_math(S, a, "log",   [](double x) { return std::log(x); }); });
     S.register_builtin("sqrt",  [](State &S, const Value &a) { return builtin_unary_math(S, a, "sqrt",  [](double x) { return std::sqrt(x); }); });

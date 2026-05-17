@@ -1,17 +1,11 @@
-#include "nanbox.hpp"
-#include "jit/jit.hpp"
+#include "vdlisp.hpp"
+#include <charconv>
 #include <iostream>
-#include <sstream>
 #include <utility>
 
 using namespace vdlisp;
 
 namespace {
-
-// 对外显示时，热点数值函数如果已经编译或足够热，就显示成 jit_func。
-static auto shows_as_jit_func(const FuncData *fd) -> bool {
-    return fd && (fd->compiled_code || fd->num_call_count > 3);
-}
 
 // release_payload 的销毁函数表，用查表代替 switch 分发
 using Destructor = void (*)(void *p) noexcept;
@@ -19,12 +13,11 @@ static void destroy_pair(void *p) noexcept { delete static_cast<PairData *>(p); 
 static void destroy_string(void *p) noexcept { delete static_cast<StringData *>(p); }
 static void destroy_func(void *p) noexcept {
     auto *fd = static_cast<FuncData *>(p);
-    if (fd->compiled_code) { global_jit.releaseFunctionCode(fd->compiled_code); fd->compiled_code = nullptr; }
     if (fd->closure_env) { release_env(fd->closure_env); fd->closure_env = nullptr; }
     delete fd;
 }
 static void destroy_macro(void *p) noexcept { delete static_cast<MacroData *>(p); }
-constexpr Destructor kDestructors[] = {
+constexpr std::array<Destructor, 9> kDestructors = {
     nullptr,          // TNIL
     destroy_pair,     // TPAIR
     nullptr,          // TNUMBER
@@ -49,11 +42,11 @@ Env::~Env() noexcept {
 // -------------------- Value implementation --------------------
 
 Value::Value(Type t) {
-    static constexpr uint64_t kTagTab[] = {
-        kTagNil, kTagPair, 0, kTagString, kTagSymbol,
+    static constexpr std::array kTagTab = {
+        kTagNil, kTagPair, 0ULL, kTagString, kTagSymbol,
         kTagFunc, kTagMacro, kTagPrim, kTagCFunc,
     };
-    bits = kTagTab[t];
+    bits = kTagTab[static_cast<size_t>(t)];
     // TNUMBER 编码为 IEEE754 0.0（即 uint64 0）
 }
 
@@ -94,76 +87,72 @@ void Value::release_payload(Type t, void *p) noexcept {
     if (!p) return;
     if (static_cast<RcBase *>(p)->dec_ref() != 0) return;
     size_t idx = static_cast<size_t>(t);
-    if (idx < sizeof(kDestructors) / sizeof(kDestructors[0]) && kDestructors[idx])
+    if (idx < std::size(kDestructors) && kDestructors[idx])
         kDestructors[idx](p);
 }
 
 // High-level helpers centralized on Value
-auto Value::type_name() const -> std::string {
-    // 对函数额外区分 jit_func，便于调试当前是否已经进入热点编译。
-    static constexpr const char *kNames[] = {
-        "nil",      // TNIL
-        "pair",     // TPAIR
-        "number",   // TNUMBER
-        "string",   // TSTRING
-        "symbol",   // TSYMBOL
-        "function", // TFUNC (special-cased below)
-        "macro",    // TMACRO
-        "prim",     // TPRIM
-        "cfunction" // TCFUNC
+auto Value::type_name() const noexcept -> std::string_view {
+    static constexpr std::array kNames = {
+        std::string_view{"nil"},       // TNIL
+        std::string_view{"pair"},      // TPAIR
+        std::string_view{"number"},    // TNUMBER
+        std::string_view{"string"},    // TSTRING
+        std::string_view{"symbol"},    // TSYMBOL
+        std::string_view{"function"},  // TFUNC
+        std::string_view{"macro"},     // TMACRO
+        std::string_view{"prim"},      // TPRIM
+        std::string_view{"cfunction"}, // TCFUNC
     };
-    Type t = get_type();
-    if (t == TFUNC) {
-        // 这里只读取元数据，不触发任何额外行为。
-        auto *fd = reinterpret_cast<FuncData *>(bits & kPayloadMask);
-        return shows_as_jit_func(fd) ? "jit_func" : "function";
-    }
-    return kNames[t];
+    return kNames[static_cast<size_t>(get_type())];
 }
 
-auto Value::to_repr(State &S) const -> std::string {
+auto Value::to_repr(State &S, std::string &out) const -> void {
     if (get_type() == TNUMBER) {
-        std::ostringstream ss;
-        ss << get_number();
-        return ss.str();
+        std::array<char, 64> buf;
+        auto [end, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), get_number());
+        out.append(buf.data(), end - buf.data());
+        return;
     }
     switch (get_type()) {
     case TSTRING:
-        return *get_string();
+        out += *get_string();
+        return;
     case TSYMBOL:
-        return *get_symbol();
+        out += *get_symbol();
+        return;
     case TPAIR: {
-        std::string s = "(";
-        // pair 既用于普通 cons cell，也用于打印形如 (a b . c) 的表结构。
+        out += '(';
         PairData *pd = get_pair();
         if (pd) {
-            s += pd->car ? pd->car.to_repr(S) : std::string("nil");
+            if (pd->car) {
+                pd->car.to_repr(S, out);
+            } else {
+                out += "nil";
+            }
             Value cur = pd->cdr;
             while (cur && cur.get_type() == TPAIR) {
-                s += " ";
+                out += ' ';
                 PairData *cpd = cur.get_pair();
-                s += cpd->car ? cpd->car.to_repr(S) : std::string("nil");
+                if (cpd->car) {
+                    cpd->car.to_repr(S, out);
+                } else {
+                    out += "nil";
+                }
                 cur = cpd->cdr;
             }
             if (cur) {
-                s += " . ";
-                s += cur.to_repr(S);
+                out += " . ";
+                cur.to_repr(S, out);
             }
         }
-        s += ")";
-        return s;
+        out += ')';
+        return;
     }
-    case TCFUNC:
-        return "<cfunc>";
-    case TMACRO:
-        return "<macro>";
-    case TPRIM:
-        return "<prim>";
-    case TFUNC: {
-        auto *fd = reinterpret_cast<FuncData *>(bits & kPayloadMask);
-        return shows_as_jit_func(fd) ? "<jit_func>" : "<function>";
-    }
-    default:
-        return "<?>";
+    case TCFUNC: out += "<cfunc>"; return;
+    case TMACRO: out += "<macro>"; return;
+    case TPRIM:  out += "<prim>"; return;
+    case TFUNC:  out += "<function>"; return;
+    default: std::unreachable();
     }
 }

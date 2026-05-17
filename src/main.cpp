@@ -1,5 +1,4 @@
 #include "helpers.hpp"
-#include "vdlisp.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -31,8 +30,8 @@ static auto load_and_run(State &S, const std::string &path, bool verbose = false
     return S.do_list(parsed, S.global);
 }
 
-// 以“源码片段 + 光标”的形式打印调用链，主要服务宏展开与嵌套调用报错。
-static void print_call_chain(const State &S, const std::vector<State::SourceLoc> &chain) {
+// 以"源码片段 + 光标"的形式打印调用链，主要服务宏展开与嵌套调用报错。
+static void print_call_chain(const State &S, const LispError::Chain &chain) {
     if (chain.empty())
         return;
     std::cerr << "Call chain:\n";
@@ -54,7 +53,6 @@ static void print_call_chain(const State &S, const std::vector<State::SourceLoc>
 }
 
 static void report_exception(State &S, const std::exception &ex) {
-    // 优先使用 LispError 自带的位置；否则退回 current_expr 做近似定位。
     if (auto le = dynamic_cast<const LispError *>(&ex)) {
         if (le->has_loc) {
             print_error_with_loc(S, le->loc, le->what());
@@ -64,7 +62,7 @@ static void report_exception(State &S, const std::exception &ex) {
         }
     }
 
-    State::SourceLoc loc;
+    SourceLoc loc;
     bool have_loc = S.get_source_loc(S.current_expr, loc);
     if (have_loc) {
         print_error_with_loc(S, loc, ex.what());
@@ -118,13 +116,6 @@ auto main(int argc, char **argv) -> int {
     }
 
     State S;
-    // 正常退出时主动清理运行时，便于配合 ASAN/Valgrind 观察真实泄漏。
-    struct ShutdownGuard {
-        State &S;
-        ~ShutdownGuard() {
-            S.shutdown_and_purge_pools();
-        }
-    } guard{S};
     // 把宿主命令行参数暴露给 Lisp 世界。
     S.bind_global("argv", S.make_string_list(argc, argv, 1));
     // 如果提供了语言层辅助库，启动时自动加载。

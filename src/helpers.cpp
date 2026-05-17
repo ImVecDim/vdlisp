@@ -10,33 +10,30 @@ static auto is_delim(char c) noexcept -> bool {
     return std::isspace((unsigned char)c) || c == '(' || c == ')' || c == '\'' || c == '"' || c == ';' || c == '`' || c == ',';
 }
 
-static auto advance_pos(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept -> void {
-    if (pos >= src.size())
-        return;
-    char c = src[pos++];
-    if (c == '\n') {
-        ++line;
-        col = 1;
-    } else {
-        ++col;
-    }
+// string_view 游标：消费时 remove_prefix，避免 src+pos 双参数
+static void advance(std::string_view &cur, size_t &line, size_t &col) noexcept {
+    if (cur.empty()) return;
+    char c = cur.front();
+    cur.remove_prefix(1);
+    if (c == '\n') { ++line; col = 1; }
+    else { ++col; }
 }
 
-static auto skip_ws_and_comments(const std::string &src, size_t &pos, size_t &line, size_t &col) noexcept -> void {
-    while (pos < src.size()) {
-        char c = src[pos];
+static void skip_ws_and_comments(std::string_view &cur, size_t &line, size_t &col) noexcept {
+    while (!cur.empty()) {
+        char c = cur.front();
         if (std::isspace((unsigned char)c)) {
-            advance_pos(src, pos, line, col);
+            advance(cur, line, col);
             continue;
         }
         if (c == ';') {
-            auto nl = src.find('\n', pos);
-            if (nl == std::string::npos) {
-                pos = src.size();
+            auto nl = cur.find('\n');
+            if (nl == std::string_view::npos) {
+                cur = {};
             } else {
                 ++line;
                 col = 1;
-                pos = nl + 1;
+                cur.remove_prefix(nl + 1);
             }
             continue;
         }
@@ -45,53 +42,53 @@ static auto skip_ws_and_comments(const std::string &src, size_t &pos, size_t &li
 }
 
 // quote/quasiquote/unquote 的解析完全相同，只有符号名不同
-static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Value;
-static auto parse_quoted(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name, const char *keyword) -> Value {
+static auto parse_at(State &S, std::string_view &cur, size_t &line, size_t &col, const std::string &name) -> Value;
+static auto parse_quoted(State &S, std::string_view &cur, size_t &line, size_t &col, const std::string &name, const char *keyword) -> Value {
     size_t qline = line;
     size_t qcol = col;
-    advance_pos(src, pos, line, col);
-    Value inner = parse_at(S, src, pos, line, col, name);
-    Value res = list_of(S, {S.make_symbol(keyword), std::move(inner)});
+    advance(cur, line, col);
+    Value inner = parse_at(S, cur, line, col, name);
+    Value res = list_of(S, S.make_symbol(keyword), std::move(inner));
     S.set_source_loc(res, name, qline, qcol);
     return res;
 }
 
 
-static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line, size_t &col, const std::string &name) -> Value {
-    skip_ws_and_comments(src, pos, line, col);
-    if (pos >= src.size()) [[unlikely]]
+static auto parse_at(State &S, std::string_view &cur, size_t &line, size_t &col, const std::string &name) -> Value {
+    skip_ws_and_comments(cur, line, col);
+    if (cur.empty()) [[unlikely]]
         return {};
-    char c = src[pos];
+    char c = cur.front();
     if (c == ')') {
-        throw LispError(State::SourceLoc{name, line, col}, "unexpected )");
+        throw LispError(SourceLoc{name, line, col}, "unexpected )");
     }
     if (c == '(') {
         size_t open_line = line;
         size_t open_col = col;
 
-        advance_pos(src, pos, line, col);
+        advance(cur, line, col);
         ListBuilder lb;
         bool closed = false;
         while (true) {
-            skip_ws_and_comments(src, pos, line, col);
-            if (pos >= src.size())
+            skip_ws_and_comments(cur, line, col);
+            if (cur.empty())
                 break;
-            if (src[pos] == ')') {
-                advance_pos(src, pos, line, col);
+            if (cur.front() == ')') {
+                advance(cur, line, col);
                 closed = true;
                 break;
             }
-            Value e = parse_at(S, src, pos, line, col, name);
+            Value e = parse_at(S, cur, line, col, name);
             if (e && e.get_type() == TSYMBOL && *e.get_symbol() == ".") {
-                skip_ws_and_comments(src, pos, line, col);
-                if (pos >= src.size())
-                    throw LispError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF after . in list");
-                Value tail = parse_at(S, src, pos, line, col, name);
+                skip_ws_and_comments(cur, line, col);
+                if (cur.empty())
+                    throw LispError(SourceLoc{name, open_line, open_col}, "unexpected EOF after . in list");
+                Value tail = parse_at(S, cur, line, col, name);
                 *lb.last = std::move(tail);
-                skip_ws_and_comments(src, pos, line, col);
-                if (pos >= src.size() || src[pos] != ')')
-                    throw LispError(State::SourceLoc{name, open_line, open_col}, "expected ) after dotted-tail");
-                advance_pos(src, pos, line, col);
+                skip_ws_and_comments(cur, line, col);
+                if (cur.empty() || cur.front() != ')')
+                    throw LispError(SourceLoc{name, open_line, open_col}, "expected ) after dotted-tail");
+                advance(cur, line, col);
                 closed = true;
                 break;
             }
@@ -102,67 +99,52 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
             S.set_source_loc(*prev_last, name, open_line, open_col);
         }
         if (!closed)
-            throw LispError(State::SourceLoc{name, open_line, open_col}, "unexpected EOF while reading list");
+            throw LispError(SourceLoc{name, open_line, open_col}, "unexpected EOF while reading list");
         return std::move(lb).done();
     } else if (c == '\'') {
-        return parse_quoted(S, src, pos, line, col, name, "quote");
+        return parse_quoted(S, cur, line, col, name, "quote");
     } else if (c == '`') {
-        return parse_quoted(S, src, pos, line, col, name, "quasiquote");
+        return parse_quoted(S, cur, line, col, name, "quasiquote");
     } else if (c == ',') {
-        return parse_quoted(S, src, pos, line, col, name, "unquote");
+        return parse_quoted(S, cur, line, col, name, "unquote");
     } else if (c == '"') {
         size_t sline = line;
         size_t scol = col;
 
-        advance_pos(src, pos, line, col);
+        advance(cur, line, col);
         std::string s;
-        while (pos < src.size() && src[pos] != '"') {
-            if (src[pos] == '\\' && pos + 1 < src.size()) {
-                advance_pos(src, pos, line, col);
-                char esc = src[pos];
+        while (!cur.empty() && cur.front() != '"') {
+            if (cur.front() == '\\' && cur.size() > 1) {
+                advance(cur, line, col);
+                char esc = cur.front();
                 switch (esc) {
-                case 'n':
-                    s.push_back('\n');
-                    break;
-                case 't':
-                    s.push_back('\t');
-                    break;
-                case 'r':
-                    s.push_back('\r');
-                    break;
-                case '\\':
-                    s.push_back('\\');
-                    break;
-                case '"':
-                    s.push_back('"');
-                    break;
-                default:
-                    s.push_back(esc);
-                    break;
+                case 'n': s.push_back('\n'); break;
+                case 't': s.push_back('\t'); break;
+                case 'r': s.push_back('\r'); break;
+                case '\\': s.push_back('\\'); break;
+                case '"': s.push_back('"'); break;
+                default: s.push_back(esc); break;
                 }
-                advance_pos(src, pos, line, col);
+                advance(cur, line, col);
             } else {
-                s.push_back(src[pos]);
-                advance_pos(src, pos, line, col);
+                s.push_back(cur.front());
+                advance(cur, line, col);
             }
         }
-        if (pos >= src.size()) {
-            throw LispError(State::SourceLoc{name, sline, scol}, "unexpected EOF while reading string");
+        if (cur.empty()) {
+            throw LispError(SourceLoc{name, sline, scol}, "unexpected EOF while reading string");
         }
-        // 消费结尾引号后再生成字符串对象。
-        advance_pos(src, pos, line, col);
+        advance(cur, line, col);
         Value v = S.make_string(s);
         S.set_source_loc(v, name, sline, scol);
         return v;
     } else {
-        // 非字符串与列表的 token 要么是 number，要么就是 symbol。
-        size_t start = pos;
+        const char *tok_start = cur.data();
         size_t tline = line;
         size_t tcol = col;
-        while (pos < src.size() && !is_delim(src[pos]))
-            advance_pos(src, pos, line, col);
-        std::string tok = src.substr(start, pos - start);
-        // 先尝试按数字读取；失败再按符号处理。
+        while (!cur.empty() && !is_delim(cur.front()))
+            advance(cur, line, col);
+        std::string tok(tok_start, cur.data() - tok_start);
         char *endp = nullptr;
         double val = strtod(tok.c_str(), &endp);
         if (endp != tok.c_str() && *endp == '\0') {
@@ -180,29 +162,24 @@ static auto parse_at(State &S, const std::string &src, size_t &pos, size_t &line
 
 auto State::parse(const std::string &src, const std::string &name) -> Value {
     sources[name] = src;
-    size_t pos = 0;
+    std::string_view cur(src);
     size_t line = 1;
     size_t col = 1;
-    return parse_at(*this, src, pos, line, col, name);
+    return parse_at(*this, cur, line, col, name);
 }
 
 auto State::parse_all(const std::string &src, const std::string &name) -> Value {
     sources[name] = src;
-    size_t pos = 0, line = 1, col = 1;
+    std::string_view cur(src);
+    size_t line = 1, col = 1;
     ListBuilder lb;
-    while (pos < src.size()) {
-        Value e = parse_at(*this, src, pos, line, col, name);
+    while (!cur.empty()) {
+        Value e = parse_at(*this, cur, line, col, name);
         lb.add(*this, std::move(e));
     }
     return std::move(lb).done();
 }
 
-auto list_of(State &S, std::initializer_list<Value> items) -> Value {
-    ListBuilder lb;
-    for (const Value &it : items)
-        lb.add(S, Value(it));
-    return std::move(lb).done();
-}
 
 void State::set_source_loc(const Value &v, std::string_view file, size_t line, size_t col) {
     if (!v)
@@ -229,27 +206,19 @@ auto State::get_source_line(std::string_view file, size_t line, std::string &out
     if (it == sources.end())
         return false;
     const std::string &s = it->second;
-    size_t cur = 1;
     size_t start = 0;
-    size_t i = 0;
-    while (cur < line && i < s.size()) {
-        if (s[i] == '\n') {
-            ++cur;
-            ++i;
-            start = i;
-        } else
-            ++i;
+    for (size_t cur = 1; cur < line; ++cur) {
+        auto nl = s.find('\n', start);
+        if (nl == std::string::npos) return false;
+        start = nl + 1;
     }
-    if (start >= s.size())
-        return false;
-    size_t end = start;
-    while (end < s.size() && s[end] != '\n')
-        ++end;
+    if (start >= s.size()) return false;
+    auto end = s.find('\n', start);
     out = s.substr(start, end - start);
     return true;
 }
 
-void print_error_with_loc(const State &S, const State::SourceLoc &loc, const std::string &msg) {
+void print_error_with_loc(const State &S, const SourceLoc &loc, const std::string &msg) {
     bool color = isatty(fileno(stderr)) || getenv("VDLISP__COLOR");
     auto cerr = [&](const char *s) { if (s) std::cerr << s; };
     auto with_color = [&](const char *c, auto &&print_fn) {
@@ -281,7 +250,6 @@ void clear_closure_env(Value &v) noexcept {
 }
 
 auto value_equal(const Value &a, const Value &b) -> bool {
-    // 结构相等用于 Lisp 层的 `=`，pair 采用递归比较。
     if (a == b)
         return true;
     if (!a || !b)
@@ -304,7 +272,5 @@ auto value_equal(const Value &a, const Value &b) -> bool {
         return a == b;
     }
 }
-
-// implementations inlined in header (include/helpers.hpp)
 
 } // namespace vdlisp

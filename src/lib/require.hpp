@@ -1,8 +1,7 @@
 #ifndef VDLISP__REQUIRE_HPP
 #define VDLISP__REQUIRE_HPP
 
-#include "../vdlisp.hpp"
-#include "../helpers.hpp"
+#include "../state.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -18,7 +17,7 @@ inline auto register_require(State &S) -> void {
             throw LispError("require requires a string");
         std::string name = *pair_car(args).get_string();
 
-        State::SourceLoc loc;
+        SourceLoc loc;
         std::vector<std::string> candidates;
         // 相对路径优先相对当前脚本，再退回进程工作目录。
         if (!name.empty() && name[0] != '/' && !(name.size() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'))) {

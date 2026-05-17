@@ -6,10 +6,6 @@
 #include "require.hpp"
 
 namespace vdlisp {
-class State;
-}
-
-namespace vdlisp {
 // 注册所有核心库函数和内建
 inline auto register_lib(State &S) -> void {
     register_core(S);
