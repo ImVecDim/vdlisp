@@ -102,6 +102,15 @@ TESTS=(
   '(set y 10) `(foo ,y bar)' '(foo 10 bar)'
   '`(1 ,(+ 2 3) 4)' '(1 5 4)'
 
+  # Splicing unquote  (,@ shorthand)
+  '`(1 ,@(list 2 3) 4)' '(1 2 3 4)'
+  '`(,@(list 1 2))' '(1 2)'
+  '`(a ,@(list) b)' '(a b)'
+  '`(1 ,@(cdr (list 2 3 4)) 5)' '(1 3 4 5)'
+
+  # Splicing unquote  (full-name form)
+  '`(1 (unquote-splicing (list 2 3)) 4)' '(1 2 3 4)'
+
   # Error cases
   '(parse 1)' 'err:parse requires a string'
   '(apply)' 'err:apply requires a function'

@@ -213,7 +213,7 @@ EnvGuard eg(e); // 作用域结束时自动 release
   - [src/main.cpp](src/main.cpp)：程序入口（REPL/脚本执行、自动加载 `scripts/lang_basics.lisp`）
   - [src/vdlisp.cpp](src/vdlisp.cpp)：解释器主体（`State`、eval/call 等）
   - [src/nanbox.hpp](src/nanbox.hpp)：值表示（NaN-boxing）、引用计数基类 `RcBase`、`Env`/`EnvGuard`
-  - [src/helpers.cpp](src/helpers.cpp)：解析器、错误定位与通用 helper
+  - [src/utils.cpp](src/utils.cpp)：解析器、错误定位与通用 helper
   - [src/core.cpp](src/core.cpp)：核心内置函数/特殊形式注册
   - [src/require.hpp](src/require.hpp)：`require`（模块加载/缓存）
 - [tests/](tests/)：测试脚本与用例（`tests/test.sh`）

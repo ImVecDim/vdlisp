@@ -1,7 +1,7 @@
 #ifndef VDLISP__REQUIRE_HPP
 #define VDLISP__REQUIRE_HPP
 
-#include "../state.hpp"
+#include "vdlisp.hpp"
 
 #include <boost/container/small_vector.hpp>
 #include <filesystem>
@@ -21,7 +21,7 @@ inline auto register_require(State &S) -> void {
         boost::container::small_vector<std::string, 4> candidates;
         // 相对路径优先相对当前脚本，再退回进程工作目录。
         if (!name.empty() && name[0] != '/' && !(name.size() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'))) {
-            if (S.current_expr && S.get_source_loc(S.current_expr, loc) && !loc.file.empty()) {
+            if (S.current_expression() && S.get_source_loc(S.current_expression(), loc) && !loc.file.empty()) {
                 auto p = loc.file;
                 auto pos = p.find_last_of("/\\");
                 if (pos != std::string::npos)
@@ -46,9 +46,8 @@ inline auto register_require(State &S) -> void {
                 else
                     key = std::filesystem::absolute(fp, ec).string();
             }
-            auto it = S.loaded_modules.find(key);
-            if (it != S.loaded_modules.end())
-                return it->second;
+            if (auto *v = S.module_loaded(key))
+                return *v;
 
             // 直接打开，无需重复 exists 检查
             std::ifstream f(key);
@@ -58,14 +57,14 @@ inline auto register_require(State &S) -> void {
             }
 
             // 先写入一个占位值，可打断简单的循环 require。
-            S.loaded_modules[key] = Value();
+            S.set_module(key, Value());
             std::ostringstream ss;
             ss << f.rdbuf();
             Value e = S.parse_all(ss.str(), key);
             Value r;
             if (e)
-                r = S.do_list(e, S.global);
-            S.loaded_modules[key] = r;
+                r = S.do_list(e, S.global_env());
+            S.set_module(key, r);
             return r;
         }
 

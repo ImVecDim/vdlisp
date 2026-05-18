@@ -1,4 +1,4 @@
-#include "state.hpp"
+#include "vdlisp.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -27,7 +27,7 @@ static auto load_and_run(State &S, const std::string &path, bool verbose = false
     ss << f.rdbuf();
     Value parsed = S.parse_all(ss.str(), path);
     if (!parsed) return {};
-    return S.do_list(parsed, S.global);
+    return S.do_list(parsed, S.global_env());
 }
 
 // 以"源码片段 + 光标"的形式打印调用链，主要服务宏展开与嵌套调用报错。
@@ -63,12 +63,12 @@ static void report_exception(State &S, const std::exception &ex) {
     }
 
     SourceLoc loc;
-    bool have_loc = S.get_source_loc(S.current_expr, loc);
+    bool have_loc = S.get_source_loc(S.current_expression(), loc);
     if (have_loc) {
         print_error_with_loc(S, loc, ex.what());
-        auto it = S.src_call_chain_map.find(S.current_expr.identity_key());
-        if (it != S.src_call_chain_map.end()) {
-            print_call_chain(S, it->second);
+        if (auto *chain =
+                S.call_chain_for(S.current_expression().identity_key())) {
+            print_call_chain(S, *chain);
         }
     } else {
         std::cerr << "error: " << ex.what() << "\n";
@@ -90,7 +90,7 @@ static void repl(State &S) {
         add_history(line.c_str());
         try {
             Value e = S.parse(line);
-            if (e) std::cout << S.to_string(S.eval(e, S.global)) << "\n";
+            if (e) std::cout << S.to_string(S.eval(e, S.global_env())) << "\n";
         } catch (const std::exception &ex) { report_exception(S, ex); }
     }
     if (!histfile.empty()) write_history(histfile.c_str());

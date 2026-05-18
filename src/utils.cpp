@@ -132,7 +132,19 @@ static auto parse_at(State &S, std::string_view &cur, size_t &line, size_t &col,
     } else if (c == '`') {
         return parse_quoted(S, cur, line, col, name, "quasiquote");
     } else if (c == ',') {
-        return parse_quoted(S, cur, line, col, name, "unquote");
+        // Handle ,@ (splicing unquote)
+        size_t qline = line;
+        size_t qcol = col;
+        advance(cur, line, col);  // consume ,
+        const char *keyword = "unquote";
+        if (!cur.empty() && cur.front() == '@') {
+            advance(cur, line, col);  // consume @
+            keyword = "unquote-splicing";
+        }
+        Value inner = parse_at(S, cur, line, col, name);
+        Value res = list_of(S, S.make_symbol(keyword), std::move(inner));
+        S.set_source_loc(res, name, qline, qcol);
+        return res;
     } else if (c == '"') {
         size_t sline = line;
         size_t scol = col;

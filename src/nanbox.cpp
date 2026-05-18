@@ -8,22 +8,20 @@ using namespace vdlisp;
 namespace {
 
 // release_payload 的销毁函数表，用查表代替 switch 分发。
-// 环境释放已移入 FuncData / MacroData 析构，此处统一 delete。
+// 环境释放已移入 ClosureData 析构，此处统一 delete。
 using Destructor = void (*)(void *p) noexcept;
-static void destroy_pair(void *p) noexcept   { delete static_cast<PairData *>(p); }
-static void destroy_string(void *p) noexcept { delete static_cast<StringData *>(p); }
-static void destroy_func(void *p) noexcept   { delete static_cast<FuncData *>(p); }
-static void destroy_macro(void *p) noexcept  { delete static_cast<MacroData *>(p); }
+template <typename T>
+static void destroy(void *p) noexcept { delete static_cast<T *>(p); }
 constexpr std::array<Destructor, 9> kDestructors = {
-    nullptr,          // TNIL
-    destroy_pair,     // TPAIR
-    nullptr,          // TNUMBER
-    destroy_string,   // TSTRING
-    destroy_string,   // TSYMBOL
-    destroy_func,     // TFUNC
-    destroy_macro,    // TMACRO
-    nullptr,          // TPRIM
-    nullptr,          // TCFUNC
+    nullptr,              // TNIL
+    destroy<PairData>,    // TPAIR
+    nullptr,              // TNUMBER
+    destroy<StringData>,  // TSTRING
+    destroy<StringData>,  // TSYMBOL
+    destroy<FuncData>,    // TFUNC
+    destroy<MacroData>,   // TMACRO
+    nullptr,              // TPRIM
+    nullptr,              // TCFUNC
 };
 
 } // namespace
@@ -97,13 +95,14 @@ auto Value::type_name() const noexcept -> std::string_view {
 }
 
 auto Value::to_repr(State &S, std::string &out) const -> void {
-    if (get_type() == TNUMBER) {
+    Type t = get_type();
+    if (t == TNUMBER) {
         std::array<char, 64> buf;
         auto [end, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), get_number());
         out.append(buf.data(), end - buf.data());
         return;
     }
-    switch (get_type()) {
+    switch (t) {
     case TSTRING:
         out += *get_string();
         return;

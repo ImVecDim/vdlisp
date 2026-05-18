@@ -7,7 +7,7 @@ BasedOnStyle: LLVM
 
 # 语言标准
 Language: Cpp
-Standard: Cpp20
+Standard: Cpp23
 
 # 缩进宽度
 IndentWidth: 4

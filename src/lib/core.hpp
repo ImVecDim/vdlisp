@@ -1,7 +1,9 @@
 #ifndef VDLISP__CORE_HPP
 #define VDLISP__CORE_HPP
 
-#include "../state.hpp"
+#include "state.hpp"
+#include "vdlisp.hpp"
+#include "builtin_helpers.hpp"
 
 #include <cstdlib>
 #include <functional>
@@ -20,7 +22,7 @@ inline Value builtin_arith(State &S, const Value &args, const char *name, Op op)
 template <typename Cmp>
 inline Value builtin_cmp(State &S, const Value &args, const char* name, Cmp cmp) {
     auto [a, b] = require_binary_args(args, name);
-    return cmp(require_number(a, name), require_number(b, name)) ? S.get_bound("#t", S.global) : Value();
+    return cmp(require_number(a, name), require_number(b, name)) ? S.get_bound("#t", S.global_env()) : Value();
 }
 
 inline Value builtin_add(State &S, const Value &args) { return builtin_arith(S, args, "+", std::plus<double>{}); }
@@ -109,7 +111,7 @@ inline auto register_core(State &S) -> void {
 
     S.register_builtin("=", [](State &S, const Value &args) -> Value {
         auto [a, b] = require_binary_args(args, "=");
-        return value_equal(a, b) ? S.get_bound("#t", S.global) : Value();
+        return value_equal(a, b) ? S.get_bound("#t", S.global_env()) : Value();
     });
 
     S.register_builtin("exit", [](State &S, const Value &args) -> Value {
@@ -129,18 +131,44 @@ inline auto register_core(State &S) -> void {
     S.register_prim("unquote", [](State &S, const Value &args, Env *env) -> Value {
         return pair_car(args) ? S.eval(pair_car(args), env) : Value();
     });
+    // unquote-splicing is only valid inside quasiquote; standalone use is an error.
+    S.register_prim("unquote-splicing", [](State &, const Value &, Env *) -> Value {
+        throw LispError("unquote-splicing (,@) is only valid inside quasiquote");
+    });
     S.register_prim("quasiquote", [](State &S, const Value &args, Env *env) -> Value {
-        // 递归展开 quasiquote；只有最内层的 unquote 会真正触发求值。
-        // 用局部函子代替 std::function，避免类型擦除开销。
+        // 递归展开 quasiquote；只有最内层的 unquote / unquote-splicing
+        // 会真正触发求值。用局部函子代替 std::function，避免类型擦除开销。
         struct QQ {
             State &S;
             Env *env;
+
+            // Append the elements of list `a` onto the front of `b`.
+            // Returns a new list with a's elements followed by b.
+            static auto append_list(State &S, const Value &a, const Value &b) -> Value {
+                if (!a) return b;
+                ListBuilder lb;
+                foreach_lisp(a, [&](const Value &el) { lb.add(S, Value(el)); });
+                *lb.last = b;
+                return lb.head;
+            }
+
             auto expand(const Value &expr, int depth) -> Value {
                 if (!expr)
                     return {};
                 if (is_pair(expr)) {
                     Value car = pair_car(expr);
                     Value cdr = pair_cdr(expr);
+                    // unquote-splicing: car is a pair (,@ form) or symbol (full-name form)
+                    if (is_symbol(car, "unquote-splicing") ||
+                        (is_pair(car) && is_symbol(pair_car(car), "unquote-splicing"))) {
+                        if (depth == 1) {
+                            Value uq_body = is_pair(car) ? pair_cdr(car) : cdr;
+                            Value spliced = uq_body ? S.eval(pair_car(uq_body), env) : Value();
+                            Value rest    = is_pair(car) ? expand(cdr, depth) : expand(pair_cdr(cdr), depth);
+                            return append_list(S, spliced, rest);
+                        }
+                        return S.make_pair(expand(car, depth - 1), expand(cdr, depth));
+                    }
                     if (is_symbol(car, "unquote")) {
                         if (depth == 1) {
                             Value uq_args = cdr;
@@ -226,7 +254,7 @@ inline auto register_core(State &S) -> void {
         Value listexpr = pair_car(pair_cdr(args));
         Value fn = S.eval(fnexpr, env);
         Value list = S.eval(listexpr, env);
-        return S.call(fn, list, env);
+        return S.call(fn, list);
     });
 }
 

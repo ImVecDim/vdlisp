@@ -10,7 +10,7 @@ using namespace vdlisp;
 
 
 
-State::State() {
+State::State() : pools_(std::make_unique<PoolData>()) {
     // 启动时预留常用哈希表容量，减少 REPL 与加载阶段的反复 rehash。
     symbol_intern.reserve(256);
     loaded_modules.reserve(64);
@@ -28,33 +28,26 @@ State::~State() {
 // -------------------- State allocators --------------------
 
 auto State::alloc_string(const std::string &s) -> StringData * {
-    return string_pool.alloc(s);
+    return pools_->string_pool.alloc(s);
 }
 
 auto State::alloc_pair(Value &&car, Value &&cdr) -> PairData * {
-    auto *p = pair_pool.alloc();
+    auto *p = pools_->pair_pool.alloc();
     // 直接 move 进 pair，可避免临时 Value 带来的引用计数抖动。
     p->car = std::move(car);
     p->cdr = std::move(cdr);
     return p;
 }
 
-auto State::alloc_func(Value &&params, Value &&body, Env *env) -> FuncData * {
-    auto *f = func_pool.alloc();
-    f->params = std::move(params);
-    f->body = std::move(body);
-    f->closure_env = env;
-    if (env) retain_env(env);
-    return f;
-}
-
-auto State::alloc_macro(Value &&params, Value &&body, Env *env) -> MacroData * {
-    auto *m = macro_pool.alloc();
-    m->params = std::move(params);
-    m->body = std::move(body);
-    m->closure_env = env;
-    if (env) retain_env(env);
-    return m;
+// 闭包分配模板：消除 alloc_func / alloc_macro 重复。仅在 state.cpp 内使用。
+template <typename DataT>
+[[nodiscard]] static auto alloc_closure(SlabPool<DataT> &pool, Value &&params, Value &&body, Env *env) -> DataT * {
+    auto *p = pool.alloc();
+    p->params = std::move(params);
+    p->body = std::move(body);
+    p->closure_env = env;
+    if (env) intrusive_ptr_add_ref(env);
+    return p;
 }
 
 // Value and Env allocators
@@ -100,19 +93,17 @@ auto State::shutdown_and_purge_pools() -> void {
         e->parent.reset();  // 释放对父环境的引用
     }
 
-    pair_pool.purge();
-    string_pool.purge();
-    func_pool.purge();
-    macro_pool.purge();
+    pools_->pair_pool.purge();
+    pools_->string_pool.purge();
+    pools_->func_pool.purge();
+    pools_->macro_pool.purge();
 
     if (global) {
-        release_env(global);
+        intrusive_ptr_release(global);
         global = nullptr;
     }
 
-    for (auto &kv : loaded_modules)
-        kv.second = Value();
-    loaded_modules.clear();
+    loaded_modules.clear();  // key 为 std::string（自有），无需像 symbol_intern 那样预清理
 
     sources.clear();
     src_call_chain_map.clear();
@@ -125,9 +116,6 @@ auto State::shutdown_and_purge_pools() -> void {
 
 
 
-auto State::make_nil() noexcept -> Value {
-    return {};
-}
 auto State::make_number(double n) noexcept -> Value {
     Value v{TNUMBER};
     v.set_number(n);
@@ -155,24 +143,17 @@ auto State::make_pair(Value car, Value cdr) -> Value {
     v.set_pair(alloc_pair(std::move(car), std::move(cdr)));
     return v;
 }
-auto State::make_cfunc(const CFunc &fn) noexcept -> Value {
-    Value v{TCFUNC};
-    v.set_cfunc(fn);
-    return v;
-}
-auto State::make_prim(const Prim &fn) noexcept -> Value {
-    Value v{TPRIM};
-    v.set_prim(fn);
-    return v;
-}
+auto State::make_cfunc(const CFunc &fn) noexcept -> Value { Value v{TCFUNC}; v.set_cfunc(fn); return v; }
+auto State::make_prim(const Prim &fn)   noexcept -> Value { Value v{TPRIM}; v.set_prim(fn); return v; }
+
 auto State::make_function(Value params, Value body, Env *env) -> Value {
     Value v{TFUNC};
-    v.set_func(alloc_func(std::move(params), std::move(body), env));
+    v.set_func(alloc_closure(pools_->func_pool, std::move(params), std::move(body), env));
     return v;
 }
 auto State::make_macro(Value params, Value body, Env *env) -> Value {
     Value v{TMACRO};
-    v.set_macro(alloc_macro(std::move(params), std::move(body), env));
+    v.set_macro(alloc_closure(pools_->macro_pool, std::move(params), std::move(body), env));
     return v;
 }
 
@@ -192,9 +173,10 @@ auto State::bind(const Value &sym, Value v, Env *env) -> Value {
         env = global;
     if (!sym || sym.get_type() != TSYMBOL)
         throw LispError("bind expects a symbol");
-    // 局部环境绑定是求值热路径，尽量直接 move 进入 map。
-    env->map[*sym.get_symbol()] = std::move(v);
-    return v;
+    // 局部环境绑定是求值热路径，直接 move + 缓存引用避免第二次查找。
+    auto &ref = env->map[*sym.get_symbol()];
+    ref = std::move(v);
+    return ref;
 }
 
 auto State::set(const Value &sym, Value v, Env *env) -> Value {
@@ -204,15 +186,17 @@ auto State::set(const Value &sym, Value v, Env *env) -> Value {
         throw LispError("set expects a symbol");
     if (auto *vp = lookup(*sym.get_symbol(), env)) [[likely]] {
         *vp = std::move(v);
-        return v;
+        return *vp;
     }
     // 向上找不到时，退化为在当前环境创建新绑定。
-    (void)bind(sym, std::move(v), env);
-    return v;
+    return bind(sym, std::move(v), env);
 }
 
 void State::bind_global(const std::string &name, Value v) {
-    // 全局绑定同样直接 move，避免多余的引用计数操作。
+    // Duplicate global bindings typically indicate a programming error
+    // (accidental double registration of a built-in or primitive).
+    if (global->map.find(name) != global->map.end())
+        throw LispError("duplicate global binding: " + name);
     global->map[name] = std::move(v);
 }
 
@@ -277,7 +261,7 @@ static void bind_params_to_env(
 
 static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::optional<LispError::Chain> {
     SourceLoc loc;
-    if (!S.get_source_loc(S.current_expr, loc) && !S.get_source_loc(expr, loc))
+    if (!S.get_source_loc(S.current_expression(), loc) && !S.get_source_loc(expr, loc))
         return std::nullopt;
     loc.label = label;
     return LispError::Chain{std::move(loc)};
@@ -294,7 +278,7 @@ static auto invoke_closure_body(
     const SourceLoc &call_loc,
     const LispError::Chain &call_chain_entry) -> Value {
     // 调用函数/宏时总是创建一个新环境，把实参绑定写进去后执行函数体。
-    Env *e = S.make_env(closure_env ? closure_env : S.global);
+    Env *e = S.make_env(closure_env ? closure_env : S.global_env());
     EnvGuard eg(e);
     bind_params_to_env(e->map, params, args, fill_missing_with_nil);
     return with_call_chain(S, have_call_loc, call_loc, call_chain_entry, [&]() -> Value {
@@ -343,12 +327,7 @@ static void bind_params_to_env(
 
 auto State::eval(const Value &expr, Env *env) -> Value {
     bool ok = false;
-    struct ExprGuard {
-        State &S; Value prev; bool &ok;
-        ExprGuard(State &S, const Value &expr, bool &ok)
-            : S(S), prev(std::exchange(S.current_expr, expr)), ok(ok) {}
-        ~ExprGuard() { if (ok) S.current_expr = std::move(prev); }
-    } guard{*this, expr, ok};
+    ExprGuard guard{*this, expr, ok};
 
     if (!expr)
         return {};
@@ -360,10 +339,17 @@ auto State::eval(const Value &expr, Env *env) -> Value {
             ok = true;
             return *vp;
         }
+        // Build call chain from the current eval context for diagnostics.
+        auto chain_entry = build_call_chain_entry(*this, expr, "unbound");
         SourceLoc sl;
-        if (get_source_loc(expr, sl))
-            throw LispError(sl, std::string("unbound symbol: ") + *expr.get_symbol());
-        throw LispError("unbound symbol: " + *expr.get_symbol());
+        bool have_loc = get_source_loc(expr, sl);
+        std::string msg = "unbound symbol: " + *expr.get_symbol();
+        if (have_loc) {
+            if (chain_entry)
+                throw LispError(sl, msg, std::move(*chain_entry));
+            throw LispError(sl, msg);
+        }
+        throw LispError(msg);
     }
     case TPAIR: {
         // pair 在求值阶段要么是调用表达式，要么是特殊形式/宏展开入口。
@@ -371,8 +357,12 @@ auto State::eval(const Value &expr, Env *env) -> Value {
         const Value &car = pd->car;
         const Value &cdr = pd->cdr;
         Value fn = eval(car, env);
-        if (!fn)
+        if (!fn) {
+            SourceLoc sl;
+            if (get_source_loc(expr, sl))
+                throw LispError(sl, "attempt to call nil");
             throw LispError("attempt to call nil");
+        }
         // 特殊形式自行控制参数求值时机。
         if (fn.get_type() == TPRIM) {
             Value res = fn.get_prim()(*this, cdr, env);
@@ -424,7 +414,7 @@ auto State::eval(const Value &expr, Env *env) -> Value {
         }
         // 普通函数调用遵循 applicative order：先求值实参，再统一调用。
         Value args = eval_args(*this, cdr, env);
-        Value fres = call(fn, args, env);
+        Value fres = call(fn, args);
         ok = true;
         return fres;
     }
@@ -438,7 +428,7 @@ namespace {
 
 // 统一的闭包调用入口（含调用链追踪）
 static auto invoke_func(State &S, FuncData *fd, const Value &args) -> Value {
-    auto chain = build_call_chain_entry(S, S.current_expr, "fn");
+    auto chain = build_call_chain_entry(S, S.current_expression(), "fn");
     bool have_call_loc = chain.has_value();
     SourceLoc call_loc = have_call_loc ? chain->front() : SourceLoc{};
     return invoke_closure_body(S, fd->closure_env, fd->params, args, fd->body, false,
@@ -446,12 +436,12 @@ static auto invoke_func(State &S, FuncData *fd, const Value &args) -> Value {
 }
 } // namespace
 
-auto State::call(const Value &fn, const Value &args, [[maybe_unused]] Env *env) -> Value {
+auto State::call(const Value &fn, const Value &args) -> Value {
     if (!fn) [[unlikely]]
         throw LispError("attempt to call nil");
-    if (fn.get_type() == TCFUNC) {
+    if (fn.get_type() == TCFUNC)
         return fn.get_cfunc()(*this, args);
-    } else if (fn.get_type() == TFUNC) {
+    if (fn.get_type() == TFUNC) {
         FuncData *fd = fn.get_func();
         return invoke_func(*this, fd, args);
     }
