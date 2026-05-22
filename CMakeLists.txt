@@ -27,8 +27,8 @@ endif()
 
 # ---- 库源文件（显式列出，避免 file(GLOB) 的增量构建陷阱） ----
 set(VDLISP_LIB_SRC
-    src/utils.cpp
-    src/nanbox.cpp
+    src/parser.cpp
+    src/value.cpp
     src/state.cpp
 )
 

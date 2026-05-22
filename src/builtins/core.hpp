@@ -1,12 +1,10 @@
 #ifndef VDLISP__CORE_HPP
 #define VDLISP__CORE_HPP
 
-#include "state.hpp"
-#include "vdlisp.hpp"
-#include "builtin_helpers.hpp"
+#include "../state.hpp"
+#include "helpers.hpp"
 
 #include <cstdlib>
-#include <functional>
 #include <iostream>
 #include <utility>
 

@@ -1,7 +1,7 @@
 #ifndef VDLISP__REQUIRE_HPP
 #define VDLISP__REQUIRE_HPP
 
-#include "vdlisp.hpp"
+#include "../../include/vdlisp.hpp"
 
 #include <boost/container/small_vector.hpp>
 #include <filesystem>

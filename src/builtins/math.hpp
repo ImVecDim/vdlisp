@@ -1,8 +1,8 @@
 #ifndef VDLISP__MATH_HPP
 #define VDLISP__MATH_HPP
 
-#include "vdlisp.hpp"
-#include "builtin_helpers.hpp"
+#include "../../include/vdlisp.hpp"
+#include "helpers.hpp"
 #include <cmath>
 
 namespace vdlisp {

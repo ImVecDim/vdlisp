@@ -1,5 +1,5 @@
-#ifndef VDLISP__LIB_HPP
-#define VDLISP__LIB_HPP
+#ifndef VDLISP__BUILTINS_REGISTER_HPP
+#define VDLISP__BUILTINS_REGISTER_HPP
 
 #include "core.hpp"
 #include "math.hpp"
@@ -13,4 +13,4 @@ inline auto register_lib(State &S) -> void {
     register_require(S);
 }
 }
-#endif // VDLISP__LIB_HPP
+#endif // VDLISP__BUILTINS_REGISTER_HPP

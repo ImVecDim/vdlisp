@@ -65,7 +65,7 @@ struct ExprGuard {
     State &S;
     Value prev;
     bool &ok;
-    ExprGuard(State &S, const Value &expr, bool &ok)
+    ExprGuard(State &S, const Value &expr, bool &ok) noexcept
         : S(S), prev(std::exchange(S.current_expr, expr)), ok(ok) {}
     ~ExprGuard() { if (ok) S.current_expr = std::move(prev); }
 };

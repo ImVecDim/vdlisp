@@ -6,7 +6,7 @@ using namespace vdlisp;
 
 // -------------------- helpers --------------------
 
-#include "lib/lib.hpp"
+#include "builtins/register.hpp"
 
 
 
@@ -116,7 +116,7 @@ auto State::shutdown_and_purge_pools() -> void {
 
 
 
-auto State::make_number(double n) noexcept -> Value {
+auto State::make_number(double n) -> Value {
     Value v{TNUMBER};
     v.set_number(n);
     return v;
@@ -193,17 +193,10 @@ auto State::set(const Value &sym, Value v, Env *env) -> Value {
 }
 
 void State::bind_global(const std::string &name, Value v) {
-    // Duplicate global bindings typically indicate a programming error
-    // (accidental double registration of a built-in or primitive).
-    if (global->map.find(name) != global->map.end())
+    // try_emplace only moves `v` if the key is new; duplicates throw.
+    auto [it, inserted] = global->map.try_emplace(name, std::move(v));
+    if (!inserted)
         throw LispError("duplicate global binding: " + name);
-    global->map[name] = std::move(v);
-}
-
-auto State::get_bound(const std::string &name, Env *env) -> Value {
-    if (auto *vp = lookup(name, env))
-        return *vp;
-    return {};
 }
 
 auto State::lookup(const std::string &name, Env *env) -> Value * {
@@ -222,7 +215,7 @@ auto State::lookup(const std::string &name, Env *env) -> Value * {
 // -------------------- eval --------------------
 
 // 先逐个求值实参，再重新组装成列表交给统一调用入口。
-static auto eval_args(State &S, const Value &list, Env *env) -> Value {
+[[nodiscard]] static auto eval_args(State &S, const Value &list, Env *env) -> Value {
     ListBuilder lb;
     foreach_lisp(list, [&](const Value &car) {
         lb.add(S, S.eval(car, env));
@@ -259,7 +252,7 @@ static void bind_params_to_env(
     const Value &args,
     bool fill_missing_with_nil);
 
-static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::optional<LispError::Chain> {
+[[nodiscard]] static auto build_call_chain_entry(State &S, const Value &expr, const char *label) -> std::optional<LispError::Chain> {
     SourceLoc loc;
     if (!S.get_source_loc(S.current_expression(), loc) && !S.get_source_loc(expr, loc))
         return std::nullopt;

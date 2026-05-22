@@ -28,7 +28,7 @@ constexpr std::array<Destructor, 9> kDestructors = {
 
 // -------------------- Value implementation --------------------
 
-Value::Value(Type t) {
+Value::Value(Type t) noexcept {
     static constexpr std::array kTagTab = {
         kTagNil, kTagPair, 0ULL, kTagString, kTagSymbol,
         kTagFunc, kTagMacro, kTagPrim, kTagCFunc,
@@ -37,7 +37,7 @@ Value::Value(Type t) {
     // TNUMBER 编码为 IEEE754 0.0（即 uint64 0）
 }
 
-Value::Value(const Value &other) : bits(other.bits) {
+Value::Value(const Value &other) noexcept : bits(other.bits) {
     retain();
 }
 
@@ -45,7 +45,7 @@ Value::Value(Value &&other) noexcept : bits(other.bits) {
     other.bits = kTagNil;
 }
 
-Value::~Value() {
+Value::~Value() noexcept {
     release();
 }
 

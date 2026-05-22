@@ -97,7 +97,7 @@ static void repl(State &S) {
 }
 
 // NaN-boxing 依赖 48 位 canonical pointer，这里在启动时做一次硬检查。
-static auto check_nanboxing_environment() -> bool {
+[[nodiscard]] static auto check_nanboxing_environment() -> bool {
     void *p = ::operator new(1);
     auto addr = reinterpret_cast<uint64_t>(p);
     ::operator delete(p);

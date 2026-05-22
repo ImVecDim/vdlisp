@@ -94,24 +94,6 @@ enum Type : uint8_t {
 };
 
 // ============================================================================
-// Bit-level Utilities
-// ============================================================================
-
-namespace detail {
-
-/// Reinterpret a double as its IEEE 754 bit pattern without UB.
-inline constexpr auto double_to_bits(double value) noexcept -> uint64_t {
-    return std::bit_cast<uint64_t>(value);
-}
-
-/// Reconstruct a double from its IEEE 754 bit pattern without UB.
-inline constexpr auto bits_to_double(uint64_t bits) noexcept -> double {
-    return std::bit_cast<double>(bits);
-}
-
-} // namespace detail
-
-// ============================================================================
 // Source Location
 // ============================================================================
 
@@ -156,7 +138,7 @@ struct RcBase {
 /// is freed in one batch at shutdown.
 class StringData : public RcBase {
   public:
-    StringData() = default;
+    StringData() noexcept = default;
     explicit StringData(std::string_view s) : value(s) {}
 
     std::string value;
@@ -175,8 +157,8 @@ class StringData : public RcBase {
 struct StringHash {
     using is_transparent = void;
 
-    auto operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
-    auto operator()(const std::string &s) const { return std::hash<std::string>{}(s);     }
+    auto operator()(std::string_view sv) const noexcept { return std::hash<std::string_view>{}(sv); }
+    auto operator()(const std::string &s) const noexcept { return std::hash<std::string>{}(s);     }
 };
 
 /// Transparent equality functor: supports comparisons between
@@ -184,9 +166,9 @@ struct StringHash {
 struct StringEqual {
     using is_transparent = void;
 
-    auto operator()(std::string_view a,     const std::string &b) const { return a == b; }
-    auto operator()(const std::string &a, std::string_view b)      const { return a == b; }
-    auto operator()(const std::string &a, const std::string &b)    const { return a == b; }
+    constexpr auto operator()(std::string_view a,     const std::string &b) const noexcept { return a == b; }
+    constexpr auto operator()(const std::string &a, std::string_view b)      const noexcept { return a == b; }
+    constexpr auto operator()(const std::string &a, const std::string &b)    const noexcept { return a == b; }
 };
 
 // ============================================================================
@@ -311,22 +293,22 @@ class VDLISP_API Value {
     // ---- Constructors ----
 
     /// Default: constructs nil.
-    Value() : bits(kTagNil) {}
+    Value() noexcept : bits(kTagNil) {}
 
     /// Construct a boxed value with the given type tag (payload initially 0).
-    explicit Value(Type t);
+    explicit Value(Type t) noexcept;
 
     /// Construct nil from nullptr (convenience for `if (v) ...` idioms).
-    Value(std::nullptr_t) : bits(kTagNil) {}
+    Value(std::nullptr_t) noexcept : bits(kTagNil) {}
 
     /// Copy constructor: increments the reference count of boxed payloads.
-    Value(const Value &other);
+    Value(const Value &other) noexcept;
 
     /// Move constructor: transfers ownership, leaves source as nil.
     Value(Value &&other) noexcept;
 
     /// Destructor: releases any owned reference-counted payload.
-    ~Value();
+    ~Value() noexcept;
 
     // ---- Assignment operators ----
 
@@ -615,7 +597,7 @@ struct ClosureData : RcBase {
     Value body;                      ///< expression(s) to evaluate
     Env  *closure_env = nullptr;     ///< captured lexical environment (null = top-level)
 
-    ~ClosureData() {
+    ~ClosureData() noexcept {
         if (closure_env) { intrusive_ptr_release(closure_env); closure_env = nullptr; }
     }
     static void operator delete(void *p) noexcept {}
@@ -821,8 +803,9 @@ public:
   /// Create nil (the empty list).
   [[nodiscard]] auto make_nil() noexcept -> Value { return {}; }
 
-  /// Create a number Value from a double.
-  [[nodiscard]] auto make_number(double n) noexcept -> Value;
+  /// Create a number Value from a double.  May throw if `n` is NaN or
+  /// Infinity (conflicts with NaN-boxing tag bits).
+  [[nodiscard]] auto make_number(double n) -> Value;
 
   /// Create a string Value (allocates StringData from the string pool).
   [[nodiscard]] auto make_string(const std::string &s) -> Value;
@@ -903,7 +886,7 @@ public:
 
   /// Retrieve the source location attached to a Value.
   /// Returns false if no location was recorded.
-  auto get_source_loc(const Value &v, SourceLoc &out) const -> bool;
+  [[nodiscard]] auto get_source_loc(const Value &v, SourceLoc &out) const -> bool;
 
   /// Retrieve a single line of source text by file name and line number.
   /// Returns false if the file or line is not available.
@@ -925,7 +908,11 @@ public:
 
   /// Look up a name in an environment chain, returning the bound value
   /// or nil if not found.
-  [[nodiscard]] auto get_bound(const std::string &name, Env *env) -> Value;
+  [[nodiscard]] auto get_bound(const std::string &name, Env *env) -> Value {
+      if (auto *vp = lookup(name, env))
+          return *vp;
+      return {};
+  }
 
   /// Look up a name in an environment chain, returning a pointer to the
   /// stored Value (for mutation) or nullptr if not found.
